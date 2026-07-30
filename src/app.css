@@ -9,7 +9,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 
 button {
   border: 0; border-radius: 14px; padding: 12px 18px;
@@ -27,7 +27,7 @@ button.ghost:hover { background: #efc9c9; }
 button.link-button { width: fit-content; padding: 0; color: #2f7d80; background: transparent; text-decoration: underline; font-weight: 600; }
 button.link-button:hover { background: transparent; color: #24676a; }
 
-input, select {
+input, select, textarea {
   width: 100%; min-width: 0; border: 1px solid #cfd8e3; border-radius: 14px;
   padding: 12px 14px; color: #172033; background: #fff;
 }
@@ -99,7 +99,7 @@ h3 { margin-bottom: 0; }
 .question-text { font-size: 1.4rem; font-weight: 600; line-height: 1.4; color: #172033; margin-bottom: 24px; }
 
 .answer-form { display: flex; gap: 10px; }
-.answer-form input { flex: 1; font-size: 1.1rem; padding: 14px 18px; }
+.answer-form textarea { flex: 1; font-size: 1.1rem; padding: 14px 18px; min-height: 80px; line-height: 1.5; resize: vertical; }
 
 /* Feedback */
 .feedback-card { padding: 18px; border-radius: 18px; margin-bottom: 16px; }
@@ -199,6 +199,35 @@ h3 { margin-bottom: 0; }
 .student-stats { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .accuracy-badge { padding: 4px 10px; border-radius: 8px; font-size: 0.8rem; font-weight: 700; background: #e6f7ea; color: #2d7a3a; }
 .last-session { font-size: 0.8rem; color: #607086; }
+
+/* Spinner */
+.spinner-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(247,239,228,0.7);
+  backdrop-filter: blur(3px);
+  z-index: 100;
+  color: #243044;
+  font-weight: 600;
+  font-size: 1rem;
+}
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #e0e8f0;
+  border-top-color: #2f7d80;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Responsive */
 @media (max-width: 860px) { .two-columns { grid-template-columns: 1fr; } .stats-grid { grid-template-columns: repeat(2, 1fr); } }
