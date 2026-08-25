@@ -4,7 +4,6 @@ mod helpers;
 mod llm;
 mod models;
 
-use std::env;
 use std::fs;
 use std::sync::Mutex;
 
@@ -1705,36 +1704,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let _ = dotenvy::dotenv();
+            let mut baserow_client = Some(BaserowClient::new());
 
-            for dir in [
-                std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())),
-                app.path().resource_dir().ok(),
-                app.path().app_data_dir().ok(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                let env_path = dir.join(".env");
-                if env_path.exists() {
-                    let _ = dotenvy::from_path(&env_path);
-                    break;
-                }
-            }
-
-            let baserow_database_id: i64 = env::var("BASEROW_DATABASE_ID")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            let baserow_api_token = env::var("BASEROW_API_TOKEN").ok().unwrap_or_default();
-
-            let mut baserow_client = if baserow_database_id > 0 && !baserow_api_token.is_empty() {
-                Some(BaserowClient::new(baserow_api_token.clone()))
-            } else {
-                None
-            };
-
-            let email_client = EmailClient::from_env();
+            let email_client = Some(EmailClient::new());
 
             let app_data_dir = app
                 .path()
@@ -1745,21 +1717,6 @@ pub fn run() {
             let db_path = app_data_dir.join("mates.sqlite3");
             let db = Connection::open(db_path).map_err(|err| format!("No se pudo abrir SQLite: {err}"))?;
             setup_database(&db)?;
-
-            if baserow_client.is_some() {
-                let _ = set_setting(&db, CLOUD_BASEROW_TOKEN_KEY, &baserow_api_token);
-                let _ = set_setting(&db, CLOUD_BASEROW_DB_ID_KEY, &baserow_database_id.to_string());
-            } else {
-                let stored_token = get_setting(&db, CLOUD_BASEROW_TOKEN_KEY).ok().flatten();
-                let stored_db_id = get_setting(&db, CLOUD_BASEROW_DB_ID_KEY).ok().flatten();
-                if let (Some(token), Some(db_id_str)) = (stored_token, stored_db_id) {
-                    if let Ok(db_id) = db_id_str.parse::<i64>() {
-                        if db_id > 0 && !token.is_empty() {
-                            baserow_client = Some(BaserowClient::new(token));
-                        }
-                    }
-                }
-            }
 
             let llm_config = load_llm_config(&db);
             let provider = build_provider(&llm_config);
@@ -1783,6 +1740,13 @@ pub fn run() {
                     None
                 }
             };
+
+            // Si hay auto-login, establecer user_id en el cliente proxy
+            if let Some(ref session) = cloud_session {
+                if let Some(ref mut client) = baserow_client {
+                    client.set_user_id(session.user_id.clone());
+                }
+            }
 
             app.manage(AppState {
                 db: Mutex::new(db),

@@ -61,7 +61,48 @@ pnpm android:build         # build APK aarch64
 pnpm android:build:all     # build para todas las targets
 ```
 
+> **Importante:** Los APK de debug (`pnpm android:dev`) no incluyen el frontend: cargan la web desde el servidor Vite del PC por red local. Si instalas ese APK en el móvil y el servidor no está corriendo (o no estás en la misma red), verás un error de conexión tipo "no se puede conectar a 192.168.x.x:1420". Para probar en el móvil de forma independiente usa `pnpm android:build`.
+
+> **Seguridad:** La configuración de `bundle.resources` incluye el archivo `.env`, por lo que cualquier secreto que contenga (tokens de Baserow, Brevo, etc.) queda embebido dentro del APK generado y es extraíble por cualquiera que tenga el archivo. No distribuyas APKs generados con un `.env` con claves reales.
+
 > **Nota:** El proyecto está en fase de desarrollo. No hay instalador empaquetado; los builds producen binarios funcionales para desarrollo y pruebas.
+
+## Firma del APK (Android)
+
+El build release se firma automáticamente si existen las variables de entorno de firma. Están definidas en `android-signing.env` (raíz del proyecto, gitignored):
+
+```bash
+export MATES_ANDROID_KEYSTORE=<ubicación del archivo keystore>
+export MATES_ANDROID_KEYSTORE_PASSWORD=<password>
+export MATES_ANDROID_KEY_ALIAS=<Alias>
+export MATES_ANDROID_KEY_PASSWORD=<password>
+```
+
+Para generar el APK firmado:
+
+```bash
+pnpm android:build:signed
+```
+
+Este script carga `android-signing.env` y ejecuta `tauri android build --target aarch64 --apk`. El APK resultante queda en:
+
+```
+src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+Para instalarlo en un dispositivo conectado por USB (con depuración USB activada):
+
+```bash
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+La configuración de firma vive en `src-tauri/gen/android/app/build.gradle.kts` (bloque `signingConfigs`), que lee las variables anteriores con un guard: si no están exportadas, el build release genera un APK sin firmar (`app-universal-release-unsigned.apk`). Si algún día se regenera `gen/android` (borrar carpeta + `pnpm android:init`), hay que volver a añadir ese bloque.
+
+Puedes verificar la firma de un APK con:
+
+```bash
+apksigner verify --print-certs <ruta-del-apk>
+```
 
 ## Configuración de API keys
 
@@ -107,35 +148,13 @@ En la app, configura:
 
 La sincronización entre dispositivos usa [Baserow](https://baserow.io), una base de datos online de código abierto. Es **opcional**; sin ella la app funciona completamente local.
 
-1. Crea una cuenta gratuita en [baserow.io](https://baserow.io)
-2. Crea una base de datos (llámala "Mates")
-3. Copia el **ID de la base de datos** de la URL (ej. `490809`)
-4. Genera un **token de API** en [baserow.io/fr/profile/account](https://baserow.io/fr/profile/account)
-5. Crea un archivo `.env` en la raíz del proyecto (o edita el existente):
-
-```env
-BASEROW_DATABASE_ID=490809
-BASEROW_API_TOKEN=tu_token_aqui
-BASEROW_API_URL=https://api.baserow.io/api
-```
+Las credenciales de Baserow y Brevo no viven en la app: un proxy de Cloudflare Worker (directorio `proxy/`) las inyecta en las peticiones. Consulta `proxy/README.md` para configurar los secrets (`BASEROW_API_TOKEN`, `BREVO_API_KEY` con `wrangler secret put`) y desplegar el worker.
 
 La sincronización es siempre bidireccional (last-writer-wins): cada operación sube primero los datos locales más recientes y luego descarga los remotos, comparando `updated_at` en formato RFC3339. Para sesiones activas (no borradas), gana siempre la versión local.
 
 ### Email transaccional (Brevo)
 
-Brevo se usa para verificación de email y recuperación de contraseña en la capa de sincronización cloud. Es **opcional**; si no se configura, las funciones de email se desactivan silenciosamente.
-
-1. Crea una cuenta en [brevo.com](https://brevo.com)
-2. Genera una API key en **Settings → API Keys**
-3. Añádela al `.env`:
-
-```env
-BREVO_API_KEY=tu_api_key_de_brevo
-```
-
-### Nota sobre el `.env`
-
-Las variables del `.env` se cargan automáticamente al iniciar la app. Primero busca el archivo en el directorio de trabajo actual, y luego en los directorios del ejecutable, recursos o datos de la app. No es necesario hacer nada más.
+Brevo se usa para verificación de email y recuperación de contraseña en la capa de sincronización cloud. Su API key se configura como secret del proxy (`wrangler secret put BREVO_API_KEY`); no se necesita ninguna configuración local.
 
 ## Uso general
 

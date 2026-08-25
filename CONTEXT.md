@@ -138,7 +138,7 @@ El idioma de las respuestas del LLM se fuerza mediante el locale del dispositivo
 - Backend Rust configurado.
 - `frontendDist` configurado a `dist`.
 - Nombre de app: Mates.
-- Identificador: `dev.mates.desktop`.
+- Identificador: `es.benjamin.mates`.
 
 ## Fase 2 Implementada
 

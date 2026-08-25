@@ -105,6 +105,11 @@ pub async fn register_account(
         .to_string();
     let user_id = user_id_str.clone();
 
+    // Establecer user_id en el cliente para las siguientes peticiones al proxy
+    if let Some(ref mut client) = *state.baserow_client.lock().map_err(|_| "Error interno")? {
+        client.set_user_id(user_id.clone());
+    }
+
     let session = CloudSession {
         user_id,
         user_name: request.name,
@@ -225,6 +230,11 @@ pub async fn login_account(
         .to_string();
     let user_id = user_id_str.clone();
 
+    // Establecer user_id en el cliente para las siguientes peticiones al proxy
+    if let Some(ref mut client) = *state.baserow_client.lock().map_err(|_| "Error interno")? {
+        client.set_user_id(user_id.clone());
+    }
+
     let session = CloudSession {
         user_id,
         user_name: name.to_string(),
@@ -269,6 +279,11 @@ pub fn logout_account(state: State<'_, AppState>) -> Result<(), String> {
     set_setting(&db, CLOUD_USER_NAME_KEY, "")?;
     set_setting(&db, CLOUD_EMAIL_KEY, "")?;
     set_setting(&db, CLOUD_LAST_SYNC_KEY, "")?;
+
+    // Limpiar user_id del cliente proxy
+    if let Some(ref mut client) = *state.baserow_client.lock().map_err(|_| "Error interno")? {
+        client.set_user_id(String::new());
+    }
 
     *state
         .cloud_session
@@ -591,6 +606,11 @@ pub async fn delete_cloud_account(state: State<'_, AppState>) -> Result<(), Stri
         .cloud_session
         .lock()
         .map_err(|_| "Error interno")? = None;
+
+    // Limpiar user_id del cliente proxy
+    if let Some(ref mut client) = *state.baserow_client.lock().map_err(|_| "Error interno")? {
+        client.set_user_id(String::new());
+    }
 
     Ok(())
 }

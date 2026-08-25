@@ -24,43 +24,46 @@ where
     Err(format!("{last_err} (tras 3 intentos)"))
 }
 
-const BASEROW_API_BASE: &str = "https://api.baserow.io/api/database";
+/// URL del proxy Cloudflare Worker para Baserow.
+/// Se inyecta en compile time desde `.env` (variable PROXY_BASEROW_URL).
+const PROXY_BASEROW: &str = env!("PROXY_BASEROW_URL");
+
+/// Shared secret para autenticación contra el proxy.
+/// Se inyecta en compile time desde `.env` (variable SHARED_SECRETS).
+/// Se usa solo el primer valor de la lista (el más reciente).
+const SHARED_SECRET: &str = env!("SHARED_SECRETS");
 
 #[derive(Clone)]
 pub struct BaserowClient {
     client: Client,
-    api_token: String,
+    user_id: Option<String>,
 }
 
 impl BaserowClient {
-    /// Crea un nuevo cliente Baserow con timeout de 30 segundos por petición.
-    pub fn new(api_token: String) -> Self {
+    /// Crea un nuevo cliente del proxy Baserow con timeout de 30 segundos por petición.
+    pub fn new() -> Self {
         Self {
             client: Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
-                .expect("No se pudo crear el cliente HTTP para Baserow"),
-            api_token,
+                .expect("No se pudo crear el cliente HTTP para el proxy"),
+            user_id: None,
         }
     }
 
-    /// HeaderMap con autorización `Token {api_token}`.
-    fn headers(&self) -> reqwest::header::HeaderMap {
-        let mut h = reqwest::header::HeaderMap::new();
-        let val = format!("Token {}", self.api_token);
-        let header_val = reqwest::header::HeaderValue::from_str(&val).unwrap();
-        h.insert(reqwest::header::AUTHORIZATION, header_val);
-        h
+    /// Establece el user_id de la sesión para enviarlo como header `X-User-Id` al proxy.
+    pub fn set_user_id(&mut self, id: String) {
+        self.user_id = if id.is_empty() { None } else { Some(id) };
     }
 
-    /// URL base `/api/database/rows/table/{table_id}/` para la tabla dada.
+    /// URL base `{proxy}/database/rows/table/{table_id}/` para la tabla dada.
     fn url(&self, table_id: i64) -> String {
-        format!("{BASEROW_API_BASE}/rows/table/{table_id}/")
+        format!("{PROXY_BASEROW}/database/rows/table/{table_id}/")
     }
 
-    /// URL completa `/api/database/rows/table/{table_id}/{row_id}/` para la fila dada.
+    /// URL completa `{proxy}/database/rows/table/{table_id}/{row_id}/` para la fila dada.
     fn url_row(&self, table_id: i64, row_id: i64) -> String {
-        format!("{}/rows/table/{table_id}/{row_id}/", BASEROW_API_BASE)
+        format!("{PROXY_BASEROW}/database/rows/table/{table_id}/{row_id}/")
     }
 
     /// Lista paginada de filas de una tabla Baserow (100 filas por página).
@@ -79,10 +82,12 @@ impl BaserowClient {
                 let mut p: Vec<(&str, &str)> = params.to_vec();
                 p.push(("page", &page_str));
                 p.push(("size", "100"));
-                let resp = self.client.get(self.url(table_id))
-                    .headers(self.headers())
-                    .query(&p)
-                    .send()
+                let mut req = self.client.get(self.url(table_id)).query(&p);
+                if let Some(ref uid) = self.user_id {
+                    req = req.header("X-User-Id", uid.as_str());
+                }
+                req = req.header("X-Proxy-Key", SHARED_SECRET);
+                let resp = req.send()
                     .await
                     .map_err(|e| {
                         if e.is_timeout() {
@@ -112,10 +117,12 @@ impl BaserowClient {
     /// Crea una nueva fila en una tabla de Baserow.
     pub async fn create_row(&self, table_id: i64, fields: Value) -> Result<Value, String> {
         retry(|| async {
-            let resp = self.client.post(self.url(table_id))
-                .headers(self.headers())
-                .json(&fields)
-                .send()
+            let mut req = self.client.post(self.url(table_id)).json(&fields);
+            if let Some(ref uid) = self.user_id {
+                req = req.header("X-User-Id", uid.as_str());
+            }
+            req = req.header("X-Proxy-Key", SHARED_SECRET);
+            let resp = req.send()
                 .await
                 .map_err(|e| {
                     if e.is_timeout() {
@@ -136,10 +143,12 @@ impl BaserowClient {
     /// Actualiza una fila de Baserow (actualización parcial). Solo cambia los campos proporcionados.
     pub async fn update_row(&self, table_id: i64, row_id: i64, fields: Value) -> Result<Value, String> {
         retry(|| async {
-            let resp = self.client.patch(self.url_row(table_id, row_id))
-                .headers(self.headers())
-                .json(&fields)
-                .send()
+            let mut req = self.client.patch(self.url_row(table_id, row_id)).json(&fields);
+            if let Some(ref uid) = self.user_id {
+                req = req.header("X-User-Id", uid.as_str());
+            }
+            req = req.header("X-Proxy-Key", SHARED_SECRET);
+            let resp = req.send()
                 .await
                 .map_err(|e| {
                     if e.is_timeout() {
@@ -160,10 +169,12 @@ impl BaserowClient {
     /// Elimina una fila de una tabla de Baserow.
     pub async fn delete_row(&self, table_id: i64, row_id: i64) -> Result<(), String> {
         retry(|| async {
-            let resp = self.client
-                .delete(self.url_row(table_id, row_id))
-                .headers(self.headers())
-                .send()
+            let mut req = self.client.delete(self.url_row(table_id, row_id));
+            if let Some(ref uid) = self.user_id {
+                req = req.header("X-User-Id", uid.as_str());
+            }
+            req = req.header("X-Proxy-Key", SHARED_SECRET);
+            let resp = req.send()
                 .await
                 .map_err(|e| {
                     if e.is_timeout() {

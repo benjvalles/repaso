@@ -1,34 +1,25 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::env;
 
-const BREVO_API_BASE: &str = "https://api.brevo.com/v3";
+/// URL del proxy Cloudflare Worker para Brevo.
+/// Se inyecta en compile time desde `.env` (variable PROXY_BREVO_URL).
+const PROXY_BREVO: &str = env!("PROXY_BREVO_URL");
 
 #[derive(Clone)]
 pub struct EmailClient {
     client: Client,
-    api_key: String,
 }
 
 impl EmailClient {
-    pub fn from_env() -> Option<Self> {
-        let api_key = env::var("BREVO_API_KEY").ok()?;
-        if api_key.is_empty() {
-            return None;
-        }
-        Some(Self {
+    pub fn new() -> Self {
+        Self {
             client: Client::new(),
-            api_key,
-        })
+        }
     }
 
     fn headers(&self) -> reqwest::header::HeaderMap {
         let mut h = reqwest::header::HeaderMap::new();
-        h.insert(
-            reqwest::header::HeaderName::from_static("api-key"),
-            reqwest::header::HeaderValue::from_str(&self.api_key).unwrap(),
-        );
         h.insert(
             reqwest::header::CONTENT_TYPE,
             reqwest::header::HeaderValue::from_static("application/json"),
@@ -41,7 +32,7 @@ impl EmailClient {
         &self,
         body: SendEmailRequest,
     ) -> Result<SendEmailResponse, String> {
-        let url = format!("{}/smtp/email", BREVO_API_BASE);
+        let url = format!("{}/smtp/email", PROXY_BREVO);
         let resp = self
             .client
             .post(&url)
@@ -69,7 +60,7 @@ impl EmailClient {
         &self,
         filters: EmailListFilters,
     ) -> Result<EmailListResponse, String> {
-        let url = format!("{}/smtp/emails", BREVO_API_BASE);
+        let url = format!("{}/smtp/emails", PROXY_BREVO);
         let resp = self
             .client
             .get(&url)
@@ -94,7 +85,7 @@ impl EmailClient {
 
     /// GET /smtp/emails/{uuid} — Obtener contenido completo de un email enviado
     pub async fn get_email_content(&self, uuid: &str) -> Result<EmailContentResponse, String> {
-        let url = format!("{}/smtp/emails/{}", BREVO_API_BASE, uuid);
+        let url = format!("{}/smtp/emails/{}", PROXY_BREVO, uuid);
         let resp = self
             .client
             .get(&url)
@@ -122,7 +113,7 @@ impl EmailClient {
         identifier: &str,
         filters: StatusFilters,
     ) -> Result<EmailStatusResponse, String> {
-        let url = format!("{}/smtp/emailStatus/{}", BREVO_API_BASE, identifier);
+        let url = format!("{}/smtp/emailStatus/{}", PROXY_BREVO, identifier);
         let resp = self
             .client
             .get(&url)
@@ -147,7 +138,7 @@ impl EmailClient {
 
     /// DELETE /smtp/email/{identifier} — Cancelar envio programado
     pub async fn delete_scheduled_email(&self, identifier: &str) -> Result<(), String> {
-        let url = format!("{}/smtp/email/{}", BREVO_API_BASE, identifier);
+        let url = format!("{}/smtp/email/{}", PROXY_BREVO, identifier);
         let resp = self
             .client
             .delete(&url)
@@ -367,7 +358,7 @@ pub async fn send_transac_email(
         .lock()
         .map_err(|_| "Error interno del servidor".to_string())?
         .clone()
-        .ok_or("BREVO_API_KEY no configurada. Revisa el archivo .env")?;
+        .ok_or("El cliente de email no esta disponible")?;
     client.send_transac_email(request).await
 }
 
@@ -381,7 +372,7 @@ pub async fn list_transac_emails(
         .lock()
         .map_err(|_| "Error interno del servidor".to_string())?
         .clone()
-        .ok_or("BREVO_API_KEY no configurada. Revisa el archivo .env")?;
+        .ok_or("El cliente de email no esta disponible")?;
     client.list_transac_emails(filters).await
 }
 
@@ -395,7 +386,7 @@ pub async fn get_email_content(
         .lock()
         .map_err(|_| "Error interno del servidor".to_string())?
         .clone()
-        .ok_or("BREVO_API_KEY no configurada. Revisa el archivo .env")?;
+        .ok_or("El cliente de email no esta disponible")?;
     client.get_email_content(&uuid).await
 }
 
@@ -410,7 +401,7 @@ pub async fn get_email_status(
         .lock()
         .map_err(|_| "Error interno del servidor".to_string())?
         .clone()
-        .ok_or("BREVO_API_KEY no configurada. Revisa el archivo .env")?;
+        .ok_or("El cliente de email no esta disponible")?;
     client.get_email_status(&identifier, filters).await
 }
 
@@ -424,6 +415,6 @@ pub async fn delete_scheduled_email(
         .lock()
         .map_err(|_| "Error interno del servidor".to_string())?
         .clone()
-        .ok_or("BREVO_API_KEY no configurada. Revisa el archivo .env")?;
+        .ok_or("El cliente de email no esta disponible")?;
     client.delete_scheduled_email(&identifier).await
 }
