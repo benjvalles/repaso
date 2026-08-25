@@ -1,6 +1,7 @@
 use reqwest::Client;
 use serde_json::Value;
 use std::future::Future;
+use std::time::Duration;
 
 /// Reintenta una operación hasta 3 veces con 500ms de espera entre fallos.
 async fn retry<F, Fut, T>(op: F) -> Result<T, String>
@@ -32,9 +33,13 @@ pub struct BaserowClient {
 }
 
 impl BaserowClient {
+    /// Crea un nuevo cliente Baserow con timeout de 30 segundos por petición.
     pub fn new(api_token: String) -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("No se pudo crear el cliente HTTP para Baserow"),
             api_token,
         }
     }
@@ -79,7 +84,13 @@ impl BaserowClient {
                     .query(&p)
                     .send()
                     .await
-                    .map_err(|e| format!("Error de conexion Baserow: {e}"))?;
+                    .map_err(|e| {
+                        if e.is_timeout() {
+                            "Tiempo de espera agotado al conectar con Baserow. Revisa tu conexion a internet.".to_string()
+                        } else {
+                            format!("Error de conexion Baserow: {e}")
+                        }
+                    })?;
                 if !resp.status().is_success() {
                     let status = resp.status().as_u16();
                     let text = resp.text().await.unwrap_or_default();
@@ -106,7 +117,13 @@ impl BaserowClient {
                 .json(&fields)
                 .send()
                 .await
-                .map_err(|e| format!("Error de conexion Baserow: {e}"))?;
+                .map_err(|e| {
+                    if e.is_timeout() {
+                        "Tiempo de espera agotado al conectar con Baserow. Revisa tu conexion a internet.".to_string()
+                    } else {
+                        format!("Error de conexion Baserow: {e}")
+                    }
+                })?;
             if !resp.status().is_success() {
                 let status = resp.status().as_u16();
                 let text = resp.text().await.unwrap_or_default();
@@ -124,7 +141,13 @@ impl BaserowClient {
                 .json(&fields)
                 .send()
                 .await
-                .map_err(|e| format!("Error de conexion Baserow: {e}"))?;
+                .map_err(|e| {
+                    if e.is_timeout() {
+                        "Tiempo de espera agotado al conectar con Baserow. Revisa tu conexion a internet.".to_string()
+                    } else {
+                        format!("Error de conexion Baserow: {e}")
+                    }
+                })?;
             if !resp.status().is_success() {
                 let status = resp.status().as_u16();
                 let text = resp.text().await.unwrap_or_default();
@@ -142,7 +165,13 @@ impl BaserowClient {
                 .headers(self.headers())
                 .send()
                 .await
-                .map_err(|e| format!("Error de conexion Baserow: {e}"))?;
+                .map_err(|e| {
+                    if e.is_timeout() {
+                        "Tiempo de espera agotado al conectar con Baserow. Revisa tu conexion a internet.".to_string()
+                    } else {
+                        format!("Error de conexion Baserow: {e}")
+                    }
+                })?;
             if !resp.status().is_success() {
                 let status = resp.status().as_u16();
                 let text = resp.text().await.unwrap_or_default();

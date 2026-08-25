@@ -26,12 +26,12 @@ impl OllamaProvider {
     /// # Parámetros
     /// - `base_url`: URL base de Ollama. Por defecto `http://localhost:11434`.
     /// - `model`: Nombre del modelo a usar. Por defecto `llama3`.
-    /// - `timeout_secs`: Timeout en segundos. Por defecto 120.
+    /// - `timeout_secs`: Timeout en segundos. Por defecto 60.
     pub fn new(base_url: Option<String>, model: Option<String>, timeout_secs: Option<u64>) -> Self {
         Self {
             base_url: base_url.unwrap_or_else(|| "http://localhost:11434".to_string()),
             model: model.unwrap_or_else(|| "llama3".to_string()),
-            timeout: Duration::from_secs(timeout_secs.unwrap_or(120)),
+            timeout: Duration::from_secs(timeout_secs.unwrap_or(60)),
         }
     }
 
