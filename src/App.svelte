@@ -7,13 +7,13 @@
   import ChildSelectView from "./ChildSelectView.svelte"
   import ChildSessionView from "./ChildSessionView.svelte"
   import ChildSummaryView from "./ChildSummaryView.svelte"
+  import ChildChatView from "./ChildChatView.svelte"
   import SetupPinView from "./SetupPinView.svelte"
   import AdultUnlockView from "./AdultUnlockView.svelte"
   import AdultPanelView from "./panels/AdultPanelView.svelte"
 
   let {
     courseLabel,
-    startSession,
   } = appState
 
   let cs = $derived(appState.cloudStatus)
@@ -71,8 +71,11 @@
     {:else if appState.view === "child_select"}
       <ChildSelectView
         profiles={appState.status?.profiles ?? []}
+        selectedProfileId={appState.selectedProfileId}
         {courseLabel}
-        onStartSession={startSession}
+        onSelectProfile={(id: string) => appState.selectProfile(id)}
+        onStartChat={() => { appState.startChat(); appState.view = "child_chat" }}
+        onStartSession={(id: string) => appState.startSession(id)}
       />
 
     {:else if appState.view === "child_session" && appState.currentQuestion}
@@ -102,6 +105,15 @@
         sessionSummary={appState.sessionSummary}
         childName={appState.status?.profiles.find(p => p.id === appState.selectedProfileId)?.display_name || "amigo"}
         onGoHome={() => appState.goHome()}
+      />
+
+    {:else if appState.view === "child_chat"}
+      <ChildChatView
+        messages={appState.chatMessages}
+        isTyping={appState.isChatLoading}
+        typewriterText={appState.chatTypewriterText}
+        onSend={(msg: string) => appState.sendChatMessage(msg)}
+        onBack={() => appState.view = "child_select"}
       />
 
     {:else if appState.view === "adult_unlock"}

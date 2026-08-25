@@ -432,6 +432,67 @@ fn test_llm_connection(state: State<'_, AppState>) -> Result<String, String> {
         .map_err(|err| format!("Error: {err}"))
 }
 
+// ==================== CHAT ====================
+
+#[tauri::command]
+/// Envía un mensaje de chat libre al LLM y devuelve la respuesta.
+/// El tono es amigable y adaptado a la edad del niño.
+///
+/// # Parámetros
+/// - `request`: Datos del mensaje (`ChatMessageRequest`).
+/// - `state`: Contexto de estado compartido `AppState`.
+///
+/// # Retorna
+/// Respuesta del asistente (`ChatMessageResponse`).
+async fn chat_message(request: ChatMessageRequest, state: State<'_, AppState>) -> Result<ChatMessageResponse, String> {
+    let (profile, provider, locale) = {
+        let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
+        let profile = get_profile_by_id(&db, &request.profile_id)?;
+        let provider_guard = state.llm_provider.lock().map_err(|_| "No se pudo acceder al proveedor LLM")?;
+        let provider = provider_guard.as_ref()
+            .ok_or("No hay proveedor LLM configurado")?
+            .clone();
+        let locale = state.locale.lock().map_err(|_| "No se pudo acceder al locale")?.clone();
+        (profile, provider, locale)
+    };
+
+    let language = match &locale[..2] {
+        "es" => "espanol",
+        "ca" => "catalan",
+        "eu" => "euskera",
+        "gl" => "gallego",
+        "en" => "ingles",
+        _ => "espanol",
+    };
+
+    let age_text = profile.age.map(|a| format!("Edad del nino: {a} anios. ")).unwrap_or_default();
+    let year_text = format!("Curso: {}o de primaria. ", profile.school_year);
+
+    let manual_context = profile.manual_prompt.as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| format!("\nContexto pedagogico adicional del perfil:\n{p}"))
+        .unwrap_or_default();
+
+    let system_prompt = format!(
+        "Eres un companion de aprendizaje para ninos. Hablas de forma amigable y sencilla. \
+         {age_text}{year_text}\
+         Puedes hablar de matematicas, curiosidades, juegos, y ayudar con dudas. \
+         NO hables de temas inapropiados para ninos. \
+         Responde siempre en {language}. Sé breve y motivador.{manual_context}"
+    );
+
+    let messages = vec![
+        llm::commands::ChatMessage { role: "system".to_string(), content: system_prompt },
+        llm::commands::ChatMessage { role: "user".to_string(), content: request.message },
+    ];
+
+    let response_text = provider.chat_completion(&messages).await
+        .map_err(|e| format!("Error del LLM: {e}"))?;
+
+    Ok(ChatMessageResponse { response: response_text })
+}
+
 // ==================== SESSIONS ====================
 
 #[tauri::command]
@@ -1755,6 +1816,7 @@ pub fn run() {
             get_llm_config,
             set_llm_config,
             test_llm_connection,
+            chat_message,
             start_session,
             generate_question,
             submit_answer,

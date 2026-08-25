@@ -29,7 +29,7 @@ pub fn log_llm_prompt(provider: &str, model: &str, system_prompt: &str, user_pro
 }
 
 /// Mensaje de chat compartido entre proveedores (formato OpenAI-compatible).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,

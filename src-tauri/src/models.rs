@@ -439,3 +439,25 @@ pub struct CloudLoginRequest {
     pub email: String,
     pub password: String,
 }
+
+/// Solicitud de mensaje de chat libre con el LLM.
+///
+/// # Campos
+///
+/// * `message` - Mensaje del usuario.
+/// * `profile_id` - ID del perfil del niño (para conocer edad y curso).
+#[derive(Debug, Deserialize)]
+pub struct ChatMessageRequest {
+    pub message: String,
+    pub profile_id: String,
+}
+
+/// Respuesta del LLM en el chat libre.
+///
+/// # Campos
+///
+/// * `response` - Texto de respuesta del asistente.
+#[derive(Debug, Serialize)]
+pub struct ChatMessageResponse {
+    pub response: String,
+}

@@ -102,4 +102,20 @@ impl LLMProviderEnum {
             Self::OpenAICompatible(p) => p.reformulate_concept(concept, question, manual_prompt, locale).await,
         }
     }
+
+    /// Envía una lista de mensajes al proveedor LLM y retorna la respuesta como texto.
+    /// Usado para chat libre (no estructurado como las sesiones de práctica).
+    ///
+    /// # Parámetros
+    /// - `messages`: Lista de mensajes del chat (sistema, historial, usuario).
+    ///
+    /// # Retorna
+    /// Texto de respuesta del asistente.
+    pub async fn chat_completion(&self, messages: &[common::ChatMessage]) -> Result<String, String> {
+        match self {
+            Self::Ollama(p) => p.chat_completion(messages).await,
+            Self::Gemini(p) => p.chat_completion(messages).await,
+            Self::OpenAICompatible(p) => p.chat_completion(messages).await,
+        }
+    }
 }
