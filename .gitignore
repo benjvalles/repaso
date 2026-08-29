@@ -6,6 +6,7 @@ node_modules
 /package
 .env
 .env.*
+!.env.example
 .dev.vars
 .wrangler
 vite.config.js.timestamp-*
