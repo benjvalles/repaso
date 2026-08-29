@@ -130,4 +130,39 @@ impl OpenAICompatibleProvider {
         let (system, prompt) = common::build_reformulation_prompt(concept, &question.question, manual_prompt, locale);
         self.generate_text(&system, &prompt).await
     }
+
+    /// Envía una lista de mensajes al servidor OpenAI-compatible y retorna la respuesta como texto.
+    ///
+    /// # Parámetros
+    /// - `messages`: Lista de mensajes del chat (sistema, historial, usuario).
+    ///
+    /// # Retorna
+    /// El texto generado por el modelo.
+    pub async fn chat_completion(&self, messages: &[common::ChatMessage]) -> Result<String, String> {
+        let client = Client::builder().timeout(self.timeout).build().map_err(|e| e.to_string())?;
+
+        let request = OpenAIChatRequest {
+            model: self.model.clone(),
+            messages: messages.to_vec(),
+            temperature: 0.3,
+            max_tokens: Some(2048),
+            stream: false,
+        };
+
+        let url = format!("{}/v1/chat/completions", self.base_url);
+
+        let json = common::chat_request(
+            &client,
+            &url,
+            &self.api_key,
+            &request,
+            "openai-compatible",
+            &self.model,
+        ).await?;
+
+        json["choices"][0]["message"]["content"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| "Respuesta vacia".to_string())
+    }
 }

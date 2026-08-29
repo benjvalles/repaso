@@ -1,5 +1,5 @@
 type LevelMode = "automatic" | "manual"
-type AppView = "loading" | "setup_pin" | "child_select" | "child_session" | "child_summary" | "adult_unlock" | "adult_panel"
+type AppView = "loading" | "setup_pin" | "child_select" | "child_session" | "child_summary" | "child_chat" | "adult_unlock" | "adult_panel"
 
 type Profile = {
   id: string

@@ -1,4 +1,4 @@
-package dev.mates.desktop
+package es.benjamin.mates
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge

@@ -1,6 +1,6 @@
 [package]
 name = "mates"
-version = "0.1.2"
+version = "0.2.0"
 description = "Aplicacion de escritorio para repaso de matematicas"
 authors = ["Benjamin"]
 edition = "2021"
@@ -33,4 +33,3 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 async-trait = "0.1"
 thiserror = "1"
 derive_more = "0.99"
-dotenvy = "0.15"

@@ -90,6 +90,12 @@ class AppState {
     consent: false,
   })
 
+  // =========== CHAT STATE ===========
+  chatMessages = $state<Array<{ role: "user" | "assistant", content: string }>>([])
+  isChatLoading = $state(false)
+  chatTypewriterText = $state("")
+  private chatTypewriterTimer: ReturnType<typeof setInterval> | null = null
+
   // =========== HELPERS ===========
   emptyProfileForm = emptyProfileForm
   courseLabel = courseLabel
@@ -769,8 +775,13 @@ class AppState {
   }
 
   // =========== CHILD SESSION ===========
+  /** Selecciona un perfil sin iniciar sesion de entrenamiento */
+  selectProfile = (profileId: string) => {
+    this.selectedProfileId = profileId
+  }
+
   /**
-   * Inicia una nueva sesión de práctica para un perfil.
+   * Inicia una nueva sesion de practica para un perfil.
    * Transiciona inmediatamente a child_session con un estado de carga inline
    * para evitar que el overlay del spinner bloquee la UI durante la llamada LLM.
    * @param profileId - ID del perfil infantil
@@ -855,6 +866,56 @@ class AppState {
     this.currentQuestion = null
     this.sessionId = ""
     this.sessionSummary = null
+  }
+
+  // =========== CHAT ===========
+  /** Limpia el chat y envía el mensaje de bienvenida */
+  startChat = () => {
+    this.chatMessages = []
+    this.chatTypewriterText = ""
+    if (this.chatTypewriterTimer) {
+      clearInterval(this.chatTypewriterTimer)
+      this.chatTypewriterTimer = null
+    }
+    const name = this.status?.profiles.find(p => p.id === this.selectedProfileId)?.display_name || "amigo"
+    this.chatMessages = [{ role: "assistant", content: `Hola ${name}, soy tu compañero de matematicas. Preguntame lo que quieras.` }]
+  }
+
+  /** Envía un mensaje al LLM y muestra la respuesta con efecto typewriter */
+  sendChatMessage = async (message: string) => {
+    if (!message.trim() || this.isChatLoading) return
+    this.chatMessages = [...this.chatMessages, { role: "user", content: message }]
+    this.isChatLoading = true
+    this.chatTypewriterText = ""
+    try {
+      const res = await invoke<{ response: string }>("chat_message", {
+        request: { message, profile_id: this.selectedProfileId },
+      })
+      this.runTypewriter(res.response)
+    } catch (err) {
+      this.chatMessages = [...this.chatMessages, { role: "assistant", content: "Lo siento, hubo un error. Intentalo de nuevo." }]
+    }
+    this.isChatLoading = false
+  }
+
+  /** Anima el texto de la respuesta letra por letra (typewriter) */
+  private runTypewriter = (fullText: string) => {
+    if (this.chatTypewriterTimer) {
+      clearInterval(this.chatTypewriterTimer)
+    }
+    let index = 0
+    this.chatTypewriterText = ""
+    this.chatTypewriterTimer = setInterval(() => {
+      if (index < fullText.length) {
+        this.chatTypewriterText += fullText[index]
+        index++
+      } else {
+        clearInterval(this.chatTypewriterTimer!)
+        this.chatTypewriterTimer = null
+        this.chatMessages = [...this.chatMessages, { role: "assistant", content: fullText }]
+        this.chatTypewriterText = ""
+      }
+    }, 30)
   }
 }
 

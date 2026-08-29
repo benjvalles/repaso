@@ -65,10 +65,9 @@
 
 {#if appState.detailSessionSummary}
   {@const summary = appState.detailSessionSummary}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
   <div class="modal-overlay" role="dialog" tabindex="0" onkeydown={(e) => e.key === "Escape" && appState.closeSessionDetail()} onclick={() => appState.closeSessionDetail()}>
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="modal-content" onclick={(e) => e.stopPropagation()}>
+      <div class="modal-content" role="document" onclick={(e) => e.stopPropagation()}>
       <div class="modal-header">
         <h3>Detalle de sesión</h3>
         <button class="secondary small" type="button" onclick={() => appState.closeSessionDetail()}>Cerrar</button>

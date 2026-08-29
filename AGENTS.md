@@ -100,27 +100,22 @@ Siempre que se llame a `sync_all_data` hay que llamar también a `refreshStatus(
 
 ## Proyecto
 
-- No es monorepo; un solo app con frontend (`src/`) y backend (`src-tauri/`)
+- Monorepo pnpm: app de escritorio en la raíz (frontend `src/`, backend `src-tauri/`) y worker proxy en `proxy/`
+- El worker `proxy/` es un Cloudflare Worker que inyecta los tokens de Baserow y Brevo en las peticiones salientes (`/baserow/*` y `/brevo/*`). La app nunca conoce las credenciales. Ver `proxy/README.md`
+- Tras desplegar el worker, actualizar las constantes `PROXY_BASEROW` (`src-tauri/src/cloud/baserow.rs`) y `PROXY_BREVO` (`src-tauri/src/email.rs`)
 - `CONTEXT.md` contiene la especificación completa del proyecto (privacidad, flujo pedagógico, fases implementadas). Consultar antes de cambios arquitectónicos.
 - No hay tests ni scripts de testing.
 
-## Variables de entorno
+## Secrets del proxy
 
-El proyecto usa un archivo `.env` (gitignored) con estas variables, que NUNCA serán leídas:
+No hay variables de entorno en la app. Los secrets viven solo en Cloudflare:
 
-```
-BASEROW_DATABASE_ID=xxx
-BASEROW_API_TOKEN=your_token
-BASEROW_API_URL=https://api.baserow.io/api
-```
+| Secret | Descripción |
+|--------|-------------|
+| `BASEROW_API_TOKEN` | Token de acceso a la API de Baserow (`wrangler secret put BASEROW_API_TOKEN`) |
+| `BREVO_API_KEY` | API key de Brevo (`wrangler secret put BREVO_API_KEY`) |
 
-| Variable | Descripción |
-|----------|-------------|
-| `BASEROW_DATABASE_ID` | ID de la base de datos "Mates" en Baserow |
-| `BASEROW_API_TOKEN` | Token de acceso de la base de datos (generar en https://baserow.io/fr/profile/account) |
-| `BASEROW_API_URL` | URL base de la API de Baserow |
-
-También existe un `.env.example` como plantilla para otros desarrolladores.
+Para desarrollo local del worker se usa `proxy/.dev.vars` (gitignored; plantilla en `proxy/.dev.vars.example`).
 
 
 ## Salida
@@ -137,7 +132,7 @@ También existe un `.env.example` como plantilla para otros desarrolladores.
 - No se modifican cadenas de documentos ni anotaciones de tipo en el código.
 - No hay manejo de errores para escenarios que no pueden ocurrir.
 - Tres líneas similares es mejor que una abstracción prematura.
-- **No leer ni acceder al archivo `.env` bajo ningún concepto.** Contiene claves y secretos que no deben exponerse.
+- **No leer ni acceder al archivo `.env` ni a `proxy/.dev.vars` bajo ningún concepto.** Contiene claves y secretos que no deben exponerse.
 
 ## Reglas de revisión
 - Indique el error. Muestra la solución. Detener.

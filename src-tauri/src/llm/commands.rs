@@ -9,6 +9,8 @@ use crate::models::{
     LLM_API_KEY_KEY, LLM_BASE_URL_KEY, LLMConfig, LLM_MODEL_KEY, LLM_PROVIDER_KEY,
 };
 
+pub use super::common::ChatMessage;
+
 /// Construye el proveedor LLM adecuado (Ollama, Gemini u OpenAI-compatible) segun la configuracion.
 ///
 /// # Parámetros

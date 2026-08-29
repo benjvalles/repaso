@@ -26,12 +26,12 @@ impl OllamaProvider {
     /// # Parámetros
     /// - `base_url`: URL base de Ollama. Por defecto `http://localhost:11434`.
     /// - `model`: Nombre del modelo a usar. Por defecto `llama3`.
-    /// - `timeout_secs`: Timeout en segundos. Por defecto 120.
+    /// - `timeout_secs`: Timeout en segundos. Por defecto 60.
     pub fn new(base_url: Option<String>, model: Option<String>, timeout_secs: Option<u64>) -> Self {
         Self {
             base_url: base_url.unwrap_or_else(|| "http://localhost:11434".to_string()),
             model: model.unwrap_or_else(|| "llama3".to_string()),
-            timeout: Duration::from_secs(timeout_secs.unwrap_or(120)),
+            timeout: Duration::from_secs(timeout_secs.unwrap_or(60)),
         }
     }
 
@@ -119,5 +119,38 @@ impl OllamaProvider {
     pub async fn reformulate_concept(&self, concept: &str, question: &LLMQuestion, manual_prompt: Option<&str>, locale: &str) -> Result<String, String> {
         let (system, prompt) = common::build_reformulation_prompt(concept, &question.question, manual_prompt, locale);
         self.generate_text(&system, &prompt).await
+    }
+
+    /// Envía una lista de mensajes al servidor Ollama y retorna la respuesta como texto.
+    ///
+    /// # Parámetros
+    /// - `messages`: Lista de mensajes del chat (sistema, historial, usuario).
+    ///
+    /// # Retorna
+    /// El texto generado por Ollama.
+    pub async fn chat_completion(&self, messages: &[common::ChatMessage]) -> Result<String, String> {
+        let client = Client::builder().timeout(self.timeout).build().map_err(|e| e.to_string())?;
+
+        let request = OllamaChatRequest {
+            model: self.model.clone(),
+            messages: messages.to_vec(),
+            stream: false,
+        };
+
+        let url = format!("{}/api/chat", self.base_url);
+
+        let json = common::chat_request(
+            &client,
+            &url,
+            "",
+            &request,
+            "ollama",
+            &self.model,
+        ).await?;
+
+        json["message"]["content"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| "Respuesta vacia de Ollama".to_string())
     }
 }

@@ -1,6 +1,6 @@
 {
   "name": "mates",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "",
   "type": "module",
   "scripts": {
@@ -11,11 +11,17 @@
     "check:watch": "svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri",
     "tauri:build": "tauri build",
+    "tauri:dev": "tauri dev",
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",
     "android:build": "tauri android build --target aarch64 --apk",
     "android:build:signed": "bash -lc 'source ./android-signing.env && tauri android build --target aarch64 --apk'",
     "android:build:all": "tauri android build",
+    "proxy:dev": "pnpm --filter baserow-proxy dev",
+    "proxy:deploy": "pnpm --filter baserow-proxy wrangler:deploy",
+    "proxy:secrets": "pnpm --filter baserow-proxy secrets",
+    "proxy:secret:put": "pnpm --filter baserow-proxy secret:put",
+    "proxy:login": "pnpm --filter baserow-proxy login",
     "version:bump:patch": "node scripts/bump-version.mjs patch",
     "version:bump:minor": "node scripts/bump-version.mjs minor"
   },

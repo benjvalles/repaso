@@ -29,7 +29,7 @@ pub fn log_llm_prompt(provider: &str, model: &str, system_prompt: &str, user_pro
 }
 
 /// Mensaje de chat compartido entre proveedores (formato OpenAI-compatible).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
@@ -97,7 +97,13 @@ pub async fn chat_request(
         builder = builder.header("Authorization", format!("Bearer {api_key}"));
     }
     let response = builder.json(body).send().await
-        .map_err(|e| format!("Error de conexion: {e}"))?;
+        .map_err(|e| {
+            if e.is_timeout() {
+                format!("Tiempo de espera agotado al conectar con {provider}. Revisa tu conexion a internet o la configuracion del servidor.")
+            } else {
+                format!("Error de conexion: {e}")
+            }
+        })?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
         let text = response.text().await.unwrap_or_default();

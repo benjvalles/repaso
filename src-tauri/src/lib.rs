@@ -4,7 +4,6 @@ mod helpers;
 mod llm;
 mod models;
 
-use std::env;
 use std::fs;
 use std::sync::Mutex;
 
@@ -430,6 +429,67 @@ fn test_llm_connection(state: State<'_, AppState>) -> Result<String, String> {
     rt.block_on(provider.generate_question(1, 1, Some("suma basica".to_string()), None, &locale))
         .map(|q| format!("Conexion OK. Pregunta: {}", q.question))
         .map_err(|err| format!("Error: {err}"))
+}
+
+// ==================== CHAT ====================
+
+#[tauri::command]
+/// Envía un mensaje de chat libre al LLM y devuelve la respuesta.
+/// El tono es amigable y adaptado a la edad del niño.
+///
+/// # Parámetros
+/// - `request`: Datos del mensaje (`ChatMessageRequest`).
+/// - `state`: Contexto de estado compartido `AppState`.
+///
+/// # Retorna
+/// Respuesta del asistente (`ChatMessageResponse`).
+async fn chat_message(request: ChatMessageRequest, state: State<'_, AppState>) -> Result<ChatMessageResponse, String> {
+    let (profile, provider, locale) = {
+        let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
+        let profile = get_profile_by_id(&db, &request.profile_id)?;
+        let provider_guard = state.llm_provider.lock().map_err(|_| "No se pudo acceder al proveedor LLM")?;
+        let provider = provider_guard.as_ref()
+            .ok_or("No hay proveedor LLM configurado")?
+            .clone();
+        let locale = state.locale.lock().map_err(|_| "No se pudo acceder al locale")?.clone();
+        (profile, provider, locale)
+    };
+
+    let language = match &locale[..2] {
+        "es" => "espanol",
+        "ca" => "catalan",
+        "eu" => "euskera",
+        "gl" => "gallego",
+        "en" => "ingles",
+        _ => "espanol",
+    };
+
+    let age_text = profile.age.map(|a| format!("Edad del nino: {a} anios. ")).unwrap_or_default();
+    let year_text = format!("Curso: {}o de primaria. ", profile.school_year);
+
+    let manual_context = profile.manual_prompt.as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| format!("\nContexto pedagogico adicional del perfil:\n{p}"))
+        .unwrap_or_default();
+
+    let system_prompt = format!(
+        "Eres un companion de aprendizaje para ninos. Hablas de forma amigable y sencilla. \
+         {age_text}{year_text}\
+         Puedes hablar de matematicas, curiosidades, juegos, y ayudar con dudas. \
+         NO hables de temas inapropiados para ninos. \
+         Responde siempre en {language}. Sé breve y motivador.{manual_context}"
+    );
+
+    let messages = vec![
+        llm::commands::ChatMessage { role: "system".to_string(), content: system_prompt },
+        llm::commands::ChatMessage { role: "user".to_string(), content: request.message },
+    ];
+
+    let response_text = provider.chat_completion(&messages).await
+        .map_err(|e| format!("Error del LLM: {e}"))?;
+
+    Ok(ChatMessageResponse { response: response_text })
 }
 
 // ==================== SESSIONS ====================
@@ -1644,36 +1704,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let _ = dotenvy::dotenv();
+            let mut baserow_client = Some(BaserowClient::new());
 
-            for dir in [
-                std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())),
-                app.path().resource_dir().ok(),
-                app.path().app_data_dir().ok(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                let env_path = dir.join(".env");
-                if env_path.exists() {
-                    let _ = dotenvy::from_path(&env_path);
-                    break;
-                }
-            }
-
-            let baserow_database_id: i64 = env::var("BASEROW_DATABASE_ID")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            let baserow_api_token = env::var("BASEROW_API_TOKEN").ok().unwrap_or_default();
-
-            let mut baserow_client = if baserow_database_id > 0 && !baserow_api_token.is_empty() {
-                Some(BaserowClient::new(baserow_api_token.clone()))
-            } else {
-                None
-            };
-
-            let email_client = EmailClient::from_env();
+            let email_client = Some(EmailClient::new());
 
             let app_data_dir = app
                 .path()
@@ -1684,21 +1717,6 @@ pub fn run() {
             let db_path = app_data_dir.join("mates.sqlite3");
             let db = Connection::open(db_path).map_err(|err| format!("No se pudo abrir SQLite: {err}"))?;
             setup_database(&db)?;
-
-            if baserow_client.is_some() {
-                let _ = set_setting(&db, CLOUD_BASEROW_TOKEN_KEY, &baserow_api_token);
-                let _ = set_setting(&db, CLOUD_BASEROW_DB_ID_KEY, &baserow_database_id.to_string());
-            } else {
-                let stored_token = get_setting(&db, CLOUD_BASEROW_TOKEN_KEY).ok().flatten();
-                let stored_db_id = get_setting(&db, CLOUD_BASEROW_DB_ID_KEY).ok().flatten();
-                if let (Some(token), Some(db_id_str)) = (stored_token, stored_db_id) {
-                    if let Ok(db_id) = db_id_str.parse::<i64>() {
-                        if db_id > 0 && !token.is_empty() {
-                            baserow_client = Some(BaserowClient::new(token));
-                        }
-                    }
-                }
-            }
 
             let llm_config = load_llm_config(&db);
             let provider = build_provider(&llm_config);
@@ -1722,6 +1740,13 @@ pub fn run() {
                     None
                 }
             };
+
+            // Si hay auto-login, establecer user_id en el cliente proxy
+            if let Some(ref session) = cloud_session {
+                if let Some(ref mut client) = baserow_client {
+                    client.set_user_id(session.user_id.clone());
+                }
+            }
 
             app.manage(AppState {
                 db: Mutex::new(db),
@@ -1755,6 +1780,7 @@ pub fn run() {
             get_llm_config,
             set_llm_config,
             test_llm_connection,
+            chat_message,
             start_session,
             generate_question,
             submit_answer,

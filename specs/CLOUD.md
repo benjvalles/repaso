@@ -102,7 +102,8 @@ indicador global de estado cloud en la barra superior de la app.
       (silenciosa si falla).
 - [x] Indicador permanente de nube en la barra superior (SVG + punto verde/gris/rojo).
 - [x] Al arrancar con auto-login, se muestra notice "Sesion de nube restaurada".
-- [x] Existe la variable `BREVO_API_KEY` en `.env` (procesada en Rust con `dotenv`).
+- [x] Las variables de configuracion (`PROXY_BASEROW_URL`, `PROXY_BREVO_URL`,
+      `SHARED_SECRETS`) se inyectan en compile time desde `.env` via `build.rs`.
 - [x] El backend tiene un comando `send_transac_email` que llama a `POST /smtp/email`.
 - [x] El backend tiene un comando `list_transac_emails` que llama a `GET /smtp/emails`.
 - [x] El backend tiene un comando `get_email_content` que llama a `GET /smtp/emails/{uuid}`.
@@ -132,11 +133,12 @@ indicador global de estado cloud en la barra superior de la app.
 6. **Sesion**: el `user_id` (row_id numerico de Baserow) se guarda en `app_settings`
    con clave `cloud_session_user_id`. No se genera ningun token UUID.
 7. **Cuenta Baserow del desarrollador**: las credenciales de Baserow (Database Token)
-   se configuran en el archivo `.env`, no expuesto al usuario final.
-8. **API Key Brevo**: se lee desde `BREVO_API_KEY` en `.env`. Si no existe, los
-   comandos de email devuelven error.
-9. **Endpoint base Brevo**: `https://api.brevo.com/v3`. No configurable en esta fase.
-10. **Autenticacion Brevo**: header `api-key: <valor>` en todas las requests.
+   viven exclusivamente en el Cloudflare Worker proxy como secrets. La app nunca las conoce.
+8. **API Key Brevo**: vive exclusivamente en el Cloudflare Worker proxy como secret.
+   La app nunca la conoce.
+9. **Endpoint base Brevo**: `https://api.brevo.com/v3` (configurado en el proxy).
+   La app usa `PROXY_BREVO_URL` que apunta al proxy, no directamente a Brevo.
+10. **Autenticacion Brevo**: header `api-key: <valor>` inyectado por el proxy.
 11. **Rate limit**: Brevo permite ~300 requests/minuto. Sin rate limiting local en
     esta fase; se confia en el manejo de errores HTTP 429.
 12. **Idempotencia**: el campo `Idempotency-Key` en `headers` permite evitar envios
@@ -468,32 +470,64 @@ Se exponen 5 operaciones contra la API REST de Brevo (`https://api.brevo.com/v3`
 | Archivo | Proposito |
 |---------|-----------|
 | `src-tauri/src/cloud/mod.rs` | Reexportacion, `CloudSession`, `CloudStatus` |
-| `src-tauri/src/cloud/baserow.rs` | Cliente HTTP para la API REST de Baserow |
+| `src-tauri/src/cloud/baserow.rs` | Cliente HTTP para la API REST de Baserow via proxy |
 | `src-tauri/src/cloud/commands.rs` | Comandos Tauri para operaciones cloud |
 | `src-tauri/src/cloud/sync.rs` | Logica de sincronizacion |
 | `src-tauri/src/email.rs` | Modulo completo: `EmailClient`, schemas, 5 comandos Tauri |
 
 #### Configuracion
 
-- Database Token de Baserow desde variable de entorno (`.env`), no expuesto al usuario final.
-- `BREVO_API_KEY` desde variable de entorno (`.env`). `EmailClient::from_env()` devuelve
-  `None` si no existe.
-- URL base API Baserow: `https://api.baserow.io/api/database/rows/table/{table_id}/`
-- URL base API Brevo: `https://api.brevo.com/v3`
+Todas las URLs y secretos se inyectan en compile time desde `.env` via `build.rs`:
+
+| Variable `.env` | Compile time | Valor local (pruebas) | Valor produccion |
+|-----------------|--------------|----------------------|------------------|
+| `PROXY_BASEROW_URL` | `env!("PROXY_BASEROW_URL")` | `http://localhost:8787/baserow` | `https://baserow-proxy.baserow-proxy.workers.dev/baserow` |
+| `PROXY_BREVO_URL` | `env!("PROXY_BREVO_URL")` | `http://localhost:8787/brevo` | `https://baserow-proxy.baserow-proxy.workers.dev/brevo` |
+| `SHARED_SECRETS` | `env!("SHARED_SECRETS")` | `v1_<hex>` | `v1_<hex>` (mismo valor) |
+
+- `build.rs` lee `.env` y exporta las variables como `cargo:rustc-env`.
+- `baserow.rs` usa `const PROXY_BASEROW: &str = env!("PROXY_BASEROW_URL")`.
+- `email.rs` usa `const PROXY_BREVO: &str = env!("PROXY_BREVO_URL")`.
+- `baserow.rs` usa `const SHARED_SECRET: &str = env!("SHARED_SECRETS")` (primer valor de la lista).
+- `BASEROW_API_TOKEN` y `BREVO_API_KEY` viven exclusivamente en el Cloudflare Worker proxy;
+  la app nunca los conoce.
+
+#### Autenticacion del proxy (3 capas)
+
+```
+Capa 1: X-Proxy-Key  -> valida contra SHARED_SECRETS en el Worker
+Capa 2: X-User-Id    -> valida que el user_id existe en tabla de cuentas (1071739)
+Capa 3: Token         -> inyectado por el Worker (BASEROW_API_TOKEN / BREVO_API_KEY)
+```
+
+- `BaserowClient` envia `X-Proxy-Key` (shared secret) y `X-User-Id` (sesion activa) en
+  cada peticion a Baserow.
+- `find_account_by_email` no envia `X-User-Id` (se usa en login/registro antes de tener sesion).
+- El proxy permite lecturas (GET/HEAD) de la tabla de cuentas sin `X-User-Id` para
+  soportar login y registro.
+- `SHARED_SECRETS` acepta una lista separada por comas para rotacion de secretos
+  (backward compatibility con versiones anteriores de la app).
 
 #### AppState
 
 ```rust
 struct AppState {
     db: Mutex<Connection>,
+    adult_unlocked: Mutex<bool>,
+    llm_provider: Mutex<Option<Box<dyn LlmProvider>>>,
+    llm_config: Mutex<LlmConfig>,
+    locale: Mutex<String>,
+    baserow_client: Mutex<Option<BaserowClient>>,
     cloud_session: Mutex<Option<CloudSession>>,
     email_client: Mutex<Option<EmailClient>>,
 }
 ```
 
 Inicializacion en `setup()`:
+- `baserow_client` se crea via `BaserowClient::new()`. Si hay auto-login restaurado,
+  se establece el `user_id` para las siguientes peticiones al proxy.
 - `cloud_session` se crea leyendo `app_settings` (posible restauracion de auto-login).
-- `email_client` se crea via `EmailClient::from_env()`.
+- `email_client` se crea via `EmailClient::new()`.
 
 ### 8.3 Comandos Tauri (todos `async fn`)
 
@@ -541,9 +575,10 @@ pub const CLOUD_LAST_SYNC_KEY: &str = "cloud_last_sync";
 pub const CLOUD_VERIFICATION_CODE_KEY: &str = "cloud_verification_code";
 pub const CLOUD_EMAIL_VERIFIED_KEY: &str = "cloud_email_verified";
 
-// Configuracion Baserow
-pub const CLOUD_BASEROW_TOKEN_KEY: &str = "baserow_api_token";
-pub const CLOUD_BASEROW_DB_ID_KEY: &str = "baserow_database_id";
+// Proxy (compile time desde .env via build.rs)
+// const PROXY_BASEROW: &str = env!("PROXY_BASEROW_URL");
+// const PROXY_BREVO: &str = env!("PROXY_BREVO_URL");
+// const SHARED_SECRET: &str = env!("SHARED_SECRETS");
 ```
 
 ### 8.5 CloudStatus (Rust y TypeScript)
@@ -750,15 +785,25 @@ if (appState.cloudStatus.connected && appState.cloudStatus.auto_login) {
 
 ## Dependencias
 
-- **Baserow.io**: cuenta del desarrollador, Database Token configurado en `.env`,
-  tablas ya creadas (IDs 1071739-1071743).
-- **Brevo API**: API key obtenida desde https://app.brevo.com/settings/keys/api,
-  configurada como `BREVO_API_KEY` en `.env`.
+- **Baserow.io**: cuenta del desarrollador, tablas ya creadas (IDs 1071739-1071743).
+  El `BASEROW_API_TOKEN` vive exclusivamente en el Cloudflare Worker proxy.
+- **Brevo API**: API key obtenida desde https://app.brevo.com/settings/keys/api.
+  La `BREVO_API_KEY` vive exclusivamente en el Cloudflare Worker proxy.
+- **Cloudflare Worker proxy**: inyecta tokens de Baserow y Brevo en las peticiones.
+  Valida `X-Proxy-Key` (shared secret) y `X-User-Id` antes de proxyar.
 - **Librerias Rust**: `reqwest`, `serde`, `serde_json`, `tokio` ya en `Cargo.toml`.
   `rand_core` (con feature `getrandom`) se usa para generar codigos de verificacion.
 - **Sin nuevas dependencias npm**: frontend no requiere cambios.
-- **Configuracion**: `.env` con `BASEROW_DATABASE_ID`, `BASEROW_API_TOKEN`,
-  `BASEROW_API_URL`, `BREVO_API_KEY`.
+- **Configuracion `.env`** (injectada en compile time via `build.rs`):
+
+| Variable | Descripcion | Ejemplo |
+|----------|-------------|---------|
+| `PROXY_BASEROW_URL` | URL del proxy para Baserow | `http://localhost:8787/baserow` |
+| `PROXY_BREVO_URL` | URL del proxy para Brevo | `http://localhost:8787/brevo` |
+| `SHARED_SECRETS` | Secreto(s) compartido(s) para autenticar contra el proxy | `v1_<hex>` |
+| `BASEROW_DATABASE_ID` | ID de la base de datos en Baserow (solo referencia) | `490809` |
+| `BASEROW_API_TOKEN` | Token de Baserow (solo para `wrangler secret put`, no en la app) | `Token ...` |
+| `BREVO_API_KEY` | API key de Brevo (solo para `wrangler secret put`, no en la app) | `xkeysib-...` |
 
 ## Definicion de Done
 
@@ -770,7 +815,8 @@ if (appState.cloudStatus.connected && appState.cloudStatus.auto_login) {
 - [x] Todos los mensajes en espanol
 - [x] Existe `src-tauri/src/cloud/` con baserow.rs, commands.rs, sync.rs, mod.rs
 - [x] Existe `src-tauri/src/email.rs` con el cliente HTTP y todas las funciones
-- [x] `BREVO_API_KEY` configurada via variable de entorno y documentada en `.env.example`
+- [x] `BREVO_API_KEY` y `BASEROW_API_TOKEN` viven exclusivamente en el proxy
+      (Cloudflare Worker secrets), nunca en la app.
 - [x] Comando `send_transac_email` implementado y registrado en Tauri
 - [x] Comando `list_transac_emails` implementado y registrado en Tauri
 - [x] Comando `get_email_content` implementado y registrado en Tauri
@@ -812,6 +858,12 @@ if (appState.cloudStatus.connected && appState.cloudStatus.auto_login) {
 - [x] Las eliminaciones y recuperaciones respetan last-modified-wins en todas las tablas
       (no se pierde una recuperacion local por una eliminacion remota antigua, ni viceversa)
 - [x] `syncNow`, `deleteProfile`, `recoverProfile` y `saveProfile` refrescan la UI tras sync
+- [x] Proxy valida `X-Proxy-Key` (shared secret) contra `SHARED_SECRETS`
+- [x] Proxy valida `X-User-Id` contra tabla de cuentas (excepto GET/HEAD de cuentas)
+- [x] `BaserowClient` envia `X-Proxy-Key` y `X-User-Id` en cada peticion
+- [x] URLs del proxy configurables via `.env` (`PROXY_BASEROW_URL`, `PROXY_BREVO_URL`)
+- [x] `SHARED_SECRETS` soporta lista separada por comas para rotacion de secretos
+- [x] `build.rs` inyecta variables del `.env` como `cargo:rustc-env`
 - [x] Soft-delete individual de sesiones (`delete_session`/`recover_session`) se propaga via sync
 - [x] `purge_old_sessions` elimina fisicamente sesiones con `deleted_at > 30 días` — solo local, no toca Baserow
 - [x] `write_remote_sessions` inserta sesiones remotas nuevas en local

@@ -26,10 +26,6 @@ pub const CLOUD_EMAIL_KEY: &str = "cloud_session_email";
 pub const CLOUD_VERIFICATION_CODE_KEY: &str = "cloud_verification_code";
 /// Clave en `app_settings` para el flag de email verificado.
 pub const CLOUD_EMAIL_VERIFIED_KEY: &str = "cloud_email_verified";
-/// Clave en `app_settings` para el token de API de Baserow.
-pub const CLOUD_BASEROW_TOKEN_KEY: &str = "baserow_api_token";
-/// Clave en `app_settings` para el ID de base de datos de Baserow.
-pub const CLOUD_BASEROW_DB_ID_KEY: &str = "baserow_database_id";
 
 /// Configuracion del proveedor LLM (Ollama, Gemini, OpenAI-compatible).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -438,4 +434,26 @@ pub struct RegisterRequest {
 pub struct CloudLoginRequest {
     pub email: String,
     pub password: String,
+}
+
+/// Solicitud de mensaje de chat libre con el LLM.
+///
+/// # Campos
+///
+/// * `message` - Mensaje del usuario.
+/// * `profile_id` - ID del perfil del niño (para conocer edad y curso).
+#[derive(Debug, Deserialize)]
+pub struct ChatMessageRequest {
+    pub message: String,
+    pub profile_id: String,
+}
+
+/// Respuesta del LLM en el chat libre.
+///
+/// # Campos
+///
+/// * `response` - Texto de respuesta del asistente.
+#[derive(Debug, Serialize)]
+pub struct ChatMessageResponse {
+    pub response: String,
 }

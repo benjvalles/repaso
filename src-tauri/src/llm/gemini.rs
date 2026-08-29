@@ -116,4 +116,48 @@ impl GeminiProvider {
         let (system, prompt) = common::build_reformulation_prompt(concept, &question.question, manual_prompt, locale);
         self.generate_text(&system, &prompt).await
     }
+
+    /// Envía una lista de mensajes a la API de Gemini y retorna la respuesta como texto.
+    ///
+    /// # Parámetros
+    /// - `messages`: Lista de mensajes del chat (sistema, historial, usuario).
+    ///
+    /// # Retorna
+    /// El texto generado por Gemini.
+    pub async fn chat_completion(&self, messages: &[common::ChatMessage]) -> Result<String, String> {
+        if self.api_key.is_empty() {
+            return Err("No se ha configurado la API key de Gemini".to_string());
+        }
+
+        let client = Client::builder().timeout(self.timeout).build().map_err(|e| e.to_string())?;
+
+        let full_text: String = messages.iter()
+            .map(|m| format!("{}: {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let request = serde_json::json!({
+            "contents": [{"parts": [{"text": full_text}]}],
+            "generation_config": {"temperature": 0.3, "max_output_tokens": 2048}
+        });
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            self.model, self.api_key
+        );
+
+        let json = common::chat_request(
+            &client,
+            &url,
+            "",
+            &request,
+            "gemini",
+            &self.model,
+        ).await?;
+
+        json["candidates"][0]["content"]["parts"][0]["text"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| "Respuesta vacia de Gemini".to_string())
+    }
 }

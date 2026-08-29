@@ -13,21 +13,12 @@ val tauriProperties = Properties().apply {
     }
 }
 
-val releaseKeystorePath = System.getenv("MATES_ANDROID_KEYSTORE").orEmpty()
-val releaseKeystorePassword = System.getenv("MATES_ANDROID_KEYSTORE_PASSWORD").orEmpty()
-val releaseKeyAlias = System.getenv("MATES_ANDROID_KEY_ALIAS").orEmpty()
-val releaseKeyPassword = System.getenv("MATES_ANDROID_KEY_PASSWORD").orEmpty()
-val hasReleaseSigning = releaseKeystorePath.isNotBlank()
-    && releaseKeystorePassword.isNotBlank()
-    && releaseKeyAlias.isNotBlank()
-    && releaseKeyPassword.isNotBlank()
-
 android {
     compileSdk = 36
-    namespace = "dev.mates.desktop"
+    namespace = "es.benjamin.mates"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "dev.mates.desktop"
+        applicationId = "es.benjamin.mates"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
@@ -35,11 +26,12 @@ android {
     }
     signingConfigs {
         create("release") {
-            if (hasReleaseSigning) {
-                storeFile = file(releaseKeystorePath)
-                storePassword = releaseKeystorePassword
-                keyAlias = releaseKeyAlias
-                keyPassword = releaseKeyPassword
+            val keystorePath = System.getenv("MATES_ANDROID_KEYSTORE")
+            if (keystorePath != null) {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("MATES_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("MATES_ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("MATES_ANDROID_KEY_PASSWORD")
             }
         }
     }
@@ -56,9 +48,7 @@ android {
             }
         }
         getByName("release") {
-            if (hasReleaseSigning) {
-                signingConfig = signingConfigs.getByName("release")
-            }
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
