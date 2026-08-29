@@ -1,6 +1,6 @@
 # Contexto Del Proyecto
 
-## Proposito
+## Propósito
 
 Aplicación multiplataforma (escritorio + Android) para que niños repasen matemáticas mediante sesiones cortas, explicaciones motivadoras y seguimiento de progreso. La app debe servir para uso domestico y, en una fase posterior, profesional.
 
@@ -32,6 +32,7 @@ Aplicación multiplataforma (escritorio + Android) para que niños repasen matem
 - El contexto pedagogico manual no debe contener nombres ni datos personales.
 - El historial completo queda local en SQLite.
 - La arquitectura tiene una capa de sincronización en nube implementada (Fase 7 WIP).
+- Las API keys de Baserow y Brevo nunca están en la app; viven exclusivamente en el Cloudflare Worker proxy.
 - La configuración/debug podrá mostrar al adulto el texto exacto enviado al LLM para transparencia.
 
 ## Lenguaje Pedagogico
@@ -243,6 +244,13 @@ El idioma de las respuestas del LLM se fuerza mediante el locale del dispositivo
 - `get_app_status` y `get_cloud_status` devuelven `auto_login` en el `CloudStatus`.
 - Contrasena hasheada con Argon2 localmente antes de enviar a Baserow.
 - Las operaciones HTTP contra Baserow se reintentan hasta 3 veces con 500ms entre intentos ante fallos de conexión o errores HTTP
+- **Proxy Cloudflare Worker** como capa intermedia entre la app y las APIs externas:
+  - La app nunca conoce las API keys de Baserow ni Brevo; el proxy las inyecta.
+  - URLs del proxy configurables via `.env` (`PROXY_BASEROW_URL`, `PROXY_BREVO_URL`), inyectadas en compile time via `build.rs`.
+  - **Autenticación del proxy (3 capas)**:
+    1. `X-Proxy-Key`: shared secret validado contra `SHARED_SECRETS` (lista separada por comas para rotación).
+    2. `X-User-Id`: ID de usuario validado contra tabla de cuentas (1071739). Excepción: lecturas de la tabla de cuentas sin user_id (login/registro).
+    3. Token inyectado por el Worker (`BASEROW_API_TOKEN` / `BREVO_API_KEY`).
 
 ## Errores Conocidos / Trabajos Futuros
 

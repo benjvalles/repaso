@@ -15,6 +15,7 @@
 | `pnpm build` | Vite build |
 | `pnpm check` | Type-check con svelte-check |
 | `pnpm tauri` | Tauri CLI |
+| `pnpm proxy:dev` | Cloudflare Worker proxy local (puerto 8787) |
 
 No hay ESLint, Prettier ni rustfmt configurados.
 **CI**: `.github/workflows/build-desktop.yml` — compila en Linux, Windows y macOS (manual o push tag `v*`). Usa pnpm.
@@ -102,7 +103,7 @@ Siempre que se llame a `sync_all_data` hay que llamar también a `refreshStatus(
 
 - Monorepo pnpm: app de escritorio en la raíz (frontend `src/`, backend `src-tauri/`) y worker proxy en `proxy/`
 - El worker `proxy/` es un Cloudflare Worker que inyecta los tokens de Baserow y Brevo en las peticiones salientes (`/baserow/*` y `/brevo/*`). La app nunca conoce las credenciales. Ver `proxy/README.md`
-- Tras desplegar el worker, actualizar las constantes `PROXY_BASEROW` (`src-tauri/src/cloud/baserow.rs`) y `PROXY_BREVO` (`src-tauri/src/email.rs`)
+- Las URLs del proxy y el shared secret se configuran en `.env` (variables `PROXY_BASEROW_URL`, `PROXY_BREVO_URL`, `SHARED_SECRETS`) y se inyectan en compile time via `build.rs`
 - `CONTEXT.md` contiene la especificación completa del proyecto (privacidad, flujo pedagógico, fases implementadas). Consultar antes de cambios arquitectónicos.
 - No hay tests ni scripts de testing.
 
@@ -114,8 +115,33 @@ No hay variables de entorno en la app. Los secrets viven solo en Cloudflare:
 |--------|-------------|
 | `BASEROW_API_TOKEN` | Token de acceso a la API de Baserow (`wrangler secret put BASEROW_API_TOKEN`) |
 | `BREVO_API_KEY` | API key de Brevo (`wrangler secret put BREVO_API_KEY`) |
+| `SHARED_SECRETS` | Shared secret(s) para autenticar peticiones de la app (`wrangler secret put SHARED_SECRETS`). Acepta lista separada por comas para rotación. |
+
+### Arquitectura de seguridad del proxy (3 capas)
+
+```
+Capa 1: X-Proxy-Key  -> valida contra SHARED_SECRETS en el Worker
+Capa 2: X-User-Id    -> valida que el user_id existe en tabla de cuentas (1071739)
+Capa 3: Token         -> inyectado por el Worker (BASEROW_API_TOKEN / BREVO_API_KEY)
+```
 
 Para desarrollo local del worker se usa `proxy/.dev.vars` (gitignored; plantilla en `proxy/.dev.vars.example`).
+
+## Desarrollo local del proxy
+
+```bash
+cd proxy && pnpm dev    # http://localhost:8787
+```
+
+Para probar la app contra el proxy local, las variables en `.env` deben ser:
+
+```env
+PROXY_BASEROW_URL=http://localhost:8787/baserow
+PROXY_BREVO_URL=http://localhost:8787/brevo
+SHARED_SECRETS=v1_<mismo_secreto_que_en_.dev.vars>
+```
+
+Tras las pruebas, cambiar las URLs a producción en `.env` y recompilar.
 
 
 ## Salida
