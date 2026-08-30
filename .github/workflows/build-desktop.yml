@@ -32,6 +32,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Create .env file
+        shell: bash
         run: |
           cat > src-tauri/.env << EOF
           SHARED_SECRETS=${{ secrets.SHARED_SECRETS }}
@@ -86,6 +87,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Create .env file
+        shell: bash
         run: |
           cat > src-tauri/.env << EOF
           SHARED_SECRETS=${{ secrets.SHARED_SECRETS }}
@@ -129,7 +131,7 @@ jobs:
           MATES_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           MATES_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           MATES_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: pnpm android:build:signed
+        run: pnpm tauri android build --target aarch64 --apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v7

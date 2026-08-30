@@ -50,7 +50,7 @@
 | `pnpm version:bump:minor` | Bump versión minor |
 
 No hay ESLint, Prettier ni rustfmt configurados.
-**CI**: `.github/workflows/build-desktop.yml` — compila en Linux, Windows y macOS (manual o push tag `v*`). Usa pnpm.
+**CI**: `.github/workflows/build-desktop.yml` — compila en Linux, Windows, macOS y Android (manual o push tag `v*`). Usa pnpm. **Antes de modificar cualquier workflow de GitHub Actions, leer `agents_docs/ACTIONS.md`** que contiene la documentación completa: triggers, jobs, secrets, errores conocidos y soluciones.
 
 ## Frontend
 

@@ -67,6 +67,15 @@ pnpm android:build:all     # build para todas las targets
 
 > **Nota:** El proyecto está en fase de desarrollo. No hay instalador empaquetado; los builds producen binarios funcionales para desarrollo y pruebas.
 
+### Descargas pre-compiladas
+
+Los binarios para todas las plataformas (Linux, Windows, macOS y Android) están disponibles en [GitHub Releases](https://github.com/benjvalles/repaso/releases). Cada release incluye:
+
+- **Linux**: `.deb`, `.AppImage`
+- **Windows**: `.msi`, `.exe` (NSIS)
+- **macOS**: `.dmg`, `.app`
+- **Android**: `.apk` (aarch64)
+
 ## Firma del APK (Android)
 
 El build release se firma automáticamente si existen las variables de entorno de firma. Están definidas en `android-signing.env` (raíz del proyecto, gitignored):
