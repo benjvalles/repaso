@@ -9,13 +9,45 @@
 
 ## Comandos
 
+### Desarrollo
 | Comando | Descripción |
 |---------|-------------|
 | `pnpm dev` | Vite dev server (puerto 1420) |
 | `pnpm build` | Vite build |
+| `pnpm preview` | Vite preview server |
 | `pnpm check` | Type-check con svelte-check |
+| `pnpm check:watch` | Type-check en modo watch |
+
+### Tauri
+| Comando | Descripción |
+|---------|-------------|
 | `pnpm tauri` | Tauri CLI |
+| `pnpm tauri:dev` | Desarrollo con Tauri (frontend + backend) |
+| `pnpm tauri:build` | Build de la app de escritorio |
+
+### Android
+| Comando | Descripción |
+|---------|-------------|
+| `pnpm android:init` | Inicializar proyecto Android |
+| `pnpm android:dev` | Desarrollo en Android |
+| `pnpm android:build` | Build APK (aarch64) |
+| `pnpm android:build:signed` | Build APK firmado |
+| `pnpm android:build:all` | Build APK (todas las arquitecturas) |
+
+### Proxy
+| Comando | Descripción |
+|---------|-------------|
 | `pnpm proxy:dev` | Cloudflare Worker proxy local (puerto 8787) |
+| `pnpm proxy:deploy` | Desplegar worker proxy |
+| `pnpm proxy:secrets` | Listar secrets del proxy |
+| `pnpm proxy:secret:put` | Añadir secret al proxy |
+| `pnpm proxy:login` | Login en Cloudflare |
+
+### Versionado
+| Comando | Descripción |
+|---------|-------------|
+| `pnpm version:bump:patch` | Bump versión patch |
+| `pnpm version:bump:minor` | Bump versión minor |
 
 No hay ESLint, Prettier ni rustfmt configurados.
 **CI**: `.github/workflows/build-desktop.yml` — compila en Linux, Windows y macOS (manual o push tag `v*`). Usa pnpm.
