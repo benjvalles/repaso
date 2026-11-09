@@ -96,6 +96,7 @@ type SessionSummary = {
   accuracy_pct: number
   avg_time_per_question: number
   total_time_secs: number
+  level_up: boolean
 }
 
 type DashboardStats = {

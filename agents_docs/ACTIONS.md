@@ -134,25 +134,25 @@ El heredoc `<< EOF` no funciona en PowerShell (Windows). Se fuerza `shell: bash`
 
 **Causa**: `version: 9` en `pnpm/action-setup` + `"packageManager": "pnpm@9.15.4"` en `package.json`.
 
-**Solucion**: No especificar `version` en `pnpm/action-setup`. Lee la version de `package.json`.
+**Solución**: No especificar `version` en `pnpm/action-setup`. Lee la version de `package.json`.
 
 ### 2. `resource path .env doesn't exist`
 
 **Causa**: `tauri.conf.json` tiene `"resources": [".env"]` pero el archivo no existe.
 
-**Solucion**: Anadir paso "Create .env file" antes del build.
+**Solución**: Añadir paso "Create .env file" antes del build.
 
 ### 3. `This tool requires JDK 17 or later`
 
 **Causa**: `sdkmanager` necesita JDK 17+. El runner tiene JDK 11.
 
-**Solucion**: Anadir `actions/setup-java@v4` con `java-version: 17` antes de `android-actions/setup-android`.
+**Solución**: Añadir `actions/setup-java@v4` con `java-version: 17` antes de `android-actions/setup-android`.
 
 ### 4. `Missing file specification after redirection operator` (Windows)
 
 **Causa**: PowerShell no soporta heredocs `<< EOF`.
 
-**Solucion**: Anadir `shell: bash` al paso.
+**Solución**: Añadir `shell: bash` al paso.
 
 ### 5. `android-signing.env: No such file or directory`
 

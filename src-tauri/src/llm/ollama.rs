@@ -1,6 +1,7 @@
 use super::{LLMQuestion, LLMExplanation};
 use super::common;
 
+use crate::models::DEFAULT_LLM_MODEL;
 use reqwest::Client;
 use serde::Serialize;
 use std::time::Duration;
@@ -25,12 +26,12 @@ impl OllamaProvider {
     ///
     /// # Parámetros
     /// - `base_url`: URL base de Ollama. Por defecto `http://localhost:11434`.
-    /// - `model`: Nombre del modelo a usar. Por defecto `llama3`.
+    /// - `model`: Nombre del modelo a usar. Por defecto `qwen2.5-math`.
     /// - `timeout_secs`: Timeout en segundos. Por defecto 60.
     pub fn new(base_url: Option<String>, model: Option<String>, timeout_secs: Option<u64>) -> Self {
         Self {
             base_url: base_url.unwrap_or_else(|| "http://localhost:11434".to_string()),
-            model: model.unwrap_or_else(|| "llama3".to_string()),
+            model: model.unwrap_or_else(|| DEFAULT_LLM_MODEL.to_string()),
             timeout: Duration::from_secs(timeout_secs.unwrap_or(60)),
         }
     }
@@ -63,6 +64,7 @@ impl OllamaProvider {
             &client,
             &url,
             "",
+            &[],
             &request,
             "ollama",
             &self.model,
@@ -143,6 +145,7 @@ impl OllamaProvider {
             &client,
             &url,
             "",
+            &[],
             &request,
             "ollama",
             &self.model,

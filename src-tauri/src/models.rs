@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 /// Clave en `app_settings` para el hash del PIN del tutor.
 pub const PIN_SETTING_KEY: &str = "guardian_pin_hash";
+/// Modelo LLM recomendado y por defecto (Ollama, especialista en matematicas).
+pub const DEFAULT_LLM_MODEL: &str = "qwen2.5-math";
 /// Clave en `app_settings` para el proveedor LLM seleccionado.
 pub const LLM_PROVIDER_KEY: &str = "llm_provider";
 /// Clave en `app_settings` para el modelo LLM seleccionado.
@@ -36,12 +38,12 @@ pub struct LLMConfig {
     pub api_key: String,
 }
 
-/// Valores por defecto para `LLMConfig` (Ollama, llama3, localhost:11434).
+/// Valores por defecto para `LLMConfig` (Ollama, qwen2.5-math, localhost:11434).
 impl Default for LLMConfig {
     fn default() -> Self {
         Self {
             provider: "ollama".to_string(),
-            model: "llama3".to_string(),
+            model: DEFAULT_LLM_MODEL.to_string(),
             base_url: "http://localhost:11434".to_string(),
             api_key: String::new(),
         }
@@ -167,6 +169,8 @@ pub struct SessionSummary {
     pub accuracy_pct: f64,
     pub avg_time_per_question: f64,
     pub total_time_secs: u32,
+    /// Indica si el nivel del perfil subio tras esta sesion (solo fin de sesion).
+    pub level_up: bool,
 }
 
 /// Respuesta al iniciar una sesion, con el ID y la primera pregunta.

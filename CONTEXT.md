@@ -69,7 +69,9 @@ La app debe tener una capa de proveedores intercambiables:
 - OpenAICompatibleProvider: endpoints compatibles con OpenAI, como LM Studio, OpenRouter, llama.cpp server u otros.
 - Futuro posible: proveedor mock/local para desarrollo y pruebas sin coste ni red.
 
-La selección del proveedor sera configurable desde la zona adulta. Las respuestas del LLM deben pedirse en formato estructurado y validarse antes de usarse o persistirse.
+La seleccion del proveedor sera configurable desde la zona adulta. Las respuestas del LLM deben pedirse en formato estructurado y validarse antes de usarse o persistirse.
+
+Modelo recomendado por defecto (Ollama): `qwen2.5-math`, especialista en matematicas. La constante `DEFAULT_LLM_MODEL` (`src-tauri/src/models.rs`) centraliza el default en los tres puntos que lo usaban; la UI de configuracion LLM muestra el comando `ollama pull qwen2.5-math`.
 
 ### Locale
 
@@ -99,11 +101,14 @@ El idioma de las respuestas del LLM se fuerza mediante el locale del dispositivo
 - Por defecto, el nivel sera automático.
 - El nivel inicial se estima por curso y/o edad.
 - En modo automático nunca se retrocede de nivel; solo se mantiene o sube.
+- **Regla de promoción implementada**: en modo automático, si la sesión completada y la inmediatamente anterior alcanzan ambas >= 80% de precisión, el nivel sube 1 punto (máximo 6). Se evalúa en `end_session` vía `promote_level_if_ready()` (`src-tauri/src/helpers.rs`). En modo manual no se promociona.
+- El umbral de "concepto dominado" está unificado en 80% (resumen de sesión y dashboard).
+- `SessionSummary.level_up` indica al frontend si el nivel subió; `ChildSummaryView` muestra un aviso motivador al niño.
 - En modo manual se puede definir un contexto pedagogico para la IA asociado al perfil.
 - En modo manual, la generación de preguntas prioriza el contexto pedagogico manual y no fuerza el concepto débil automático del historial.
 - En la gestión actual de perfiles, el nivel actual no baja al editar.
 
-## Metricas A Guardar En Fases Posteriores
+## Métricas A Guardar En Fases Posteriores
 
 - Aciertos por sesión.
 - Errores por sesión.
@@ -242,7 +247,7 @@ El idioma de las respuestas del LLM se fuerza mediante el locale del dispositivo
     ejecuta sincronización en segundo plano (silenciosa si falla).
 - `refreshStatus()` en el frontend actualiza `cloudStatus` desde `get_app_status`.
 - `get_app_status` y `get_cloud_status` devuelven `auto_login` en el `CloudStatus`.
-- Contrasena hasheada con Argon2 localmente antes de enviar a Baserow.
+- Contraseña hasheada con Argon2 localmente antes de enviar a Baserow.
 - Las operaciones HTTP contra Baserow se reintentan hasta 3 veces con 500ms entre intentos ante fallos de conexión o errores HTTP
 - **Proxy Cloudflare Worker** como capa intermedia entre la app y las APIs externas:
   - La app nunca conoce las API keys de Baserow ni Brevo; el proxy las inyecta.
@@ -268,8 +273,6 @@ El idioma de las respuestas del LLM se fuerza mediante el locale del dispositivo
 
 ## Decisiones Pendientes Futuras
 
-- Elegir modelo recomendado de Ollama.
-- Definir reglas exactas de promoción de nivel.
 - Definir diseño visual infantil final.
 - Definir empaquetado/instalador.
 - FUTURO: Login con email+password para tutores.

@@ -736,11 +736,17 @@ fn end_session(session_id: String, state: State<'_, AppState>) -> Result<Session
         let concept_questions: Vec<_> = questions.iter().filter(|q| q.concept == *concept).collect();
         let concept_correct = concept_questions.iter().filter(|q| q.is_correct == Some(true)).count();
         let concept_total = concept_questions.len();
-        if concept_total > 0 && concept_correct as f64 / concept_total as f64 >= 0.7 {
+        if concept_total > 0 && concept_correct as f64 / concept_total as f64 >= 0.8 {
             concepts_mastered.push(concept.clone());
         } else {
             concepts_to_practice.push(concept.clone());
         }
+    }
+
+    // Promocion de nivel: 2 sesiones consecutivas >= 80% en modo automatico
+    let mut level_up = false;
+    if let Ok(profile) = get_profile_by_id(&db, &session.profile_id) {
+        level_up = promote_level_if_ready(&db, &profile, &session_id, accuracy_pct)?;
     }
 
     Ok(SessionSummary {
@@ -752,6 +758,7 @@ fn end_session(session_id: String, state: State<'_, AppState>) -> Result<Session
         accuracy_pct,
         avg_time_per_question: avg_time,
         total_time_secs: total_time,
+        level_up,
     })
 }
 
@@ -968,7 +975,7 @@ fn get_session_summary(session_id: String, state: State<'_, AppState>) -> Result
         let concept_questions: Vec<_> = questions.iter().filter(|q| q.concept == *concept).collect();
         let concept_correct = concept_questions.iter().filter(|q| q.is_correct == Some(true)).count();
         let concept_total = concept_questions.len();
-        if concept_total > 0 && concept_correct as f64 / concept_total as f64 >= 0.7 {
+        if concept_total > 0 && concept_correct as f64 / concept_total as f64 >= 0.8 {
             concepts_mastered.push(concept.clone());
         } else {
             concepts_to_practice.push(concept.clone());
@@ -984,6 +991,7 @@ fn get_session_summary(session_id: String, state: State<'_, AppState>) -> Result
         accuracy_pct,
         avg_time_per_question: avg_time,
         total_time_secs: total_time,
+        level_up: false,
     })
 }
 

@@ -648,6 +648,61 @@ pub fn resolve_current_level(school_year: u8, level_mode: LevelMode, manual_leve
     }
 }
 
+/// Promociona el nivel del perfil si corresponde tras completar una sesion.
+///
+/// Regla: en modo automatico, si la sesion recien completada y la inmediatamente
+/// anterior alcanzan ambas >= 80% de precision, el nivel sube 1 punto (maximo 6).
+/// El nivel nunca baja. En modo manual no se promociona (el tutor fija el nivel).
+///
+/// # Argumentos
+///
+/// * `db` - Conexion a la base de datos SQLite.
+/// * `profile` - Perfil del estudiante que acaba de completar la sesion.
+/// * `session_id` - Identificador de la sesion recien completada.
+/// * `accuracy_pct` - Precision de la sesion en porcentaje.
+///
+/// # Retorna
+///
+/// * `Ok(true)` si el nivel subio.
+/// * `Ok(false)` si no corresponde promocion.
+/// * `Err(String)` si falla la actualizacion en base de datos.
+pub fn promote_level_if_ready(db: &Connection, profile: &Profile, session_id: &str, accuracy_pct: f64) -> Result<bool, String> {
+    if profile.level_mode != LevelMode::Automatic || accuracy_pct < 80.0 || profile.current_level >= 6 {
+        return Ok(false);
+    }
+
+    // Precision de la sesion inmediatamente anterior (excluye la actual)
+    let prev_accuracy: Option<f64> = {
+        let mut stmt = db.prepare(
+             "SELECT correct_count, total_questions FROM sessions
+              WHERE profile_id = ?1 AND status = 'completed' AND deleted_at IS NULL AND id != ?2
+              ORDER BY started_at DESC LIMIT 1",
+        ).map_err(|err| format!("No se pudo preparar la consulta de promocion: {err}"))?;
+
+        let mut rows = stmt.query_map(params![profile.id, session_id], |row| {
+            let correct: u8 = row.get(0)?;
+            let total: u8 = row.get(1)?;
+            Ok(if total > 0 { correct as f64 * 100.0 / total as f64 } else { 0.0 })
+        }).map_err(|err| format!("No se pudo leer la sesion anterior: {err}"))?;
+
+        rows.next().and_then(|r| r.ok())
+    };
+
+    match prev_accuracy {
+        Some(prev) if prev >= 80.0 => {}
+        _ => return Ok(false),
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let new_level = profile.current_level + 1;
+    db.execute(
+        "UPDATE profiles SET current_level = ?1, updated_at = ?2 WHERE id = ?3",
+        params![new_level, now, profile.id],
+    ).map_err(|err| format!("No se pudo actualizar el nivel: {err}"))?;
+
+    Ok(true)
+}
+
 /// Obtiene el concepto con peor rendimiento para un perfil, basado en el historial de sesiones.
 ///
 /// # Argumentos

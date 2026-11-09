@@ -1,6 +1,7 @@
 use super::{LLMQuestion, LLMExplanation};
 use super::common;
 
+use crate::models::DEFAULT_LLM_MODEL;
 use reqwest::Client;
 use serde::Serialize;
 use std::time::Duration;
@@ -22,22 +23,39 @@ pub struct OpenAICompatibleProvider {
     api_key: String,
     model: String,
     timeout: Duration,
+    /// Headers adicionales requeridos por el endpoint (p. ej. OpenCode).
+    extra_headers: Vec<(String, String)>,
 }
 
 impl OpenAICompatibleProvider {
     /// Crea una nueva instancia del proveedor OpenAI-compatible.
     ///
+    /// Si `base_url` apunta a OpenCode se añaden los headers que su gateway exige:
+    /// `x-opencode-session` (identificador estable de sesion) y `User-Agent` propio.
+    ///
     /// # Parámetros
     /// - `base_url`: URL base del servidor. Por defecto `http://localhost:1234`.
     /// - `api_key`: API key opcional. Algunos servidores locales no la requieren.
-    /// - `model`: Nombre del modelo. Por defecto `llama3`.
+    /// - `model`: Nombre del modelo. Por defecto `qwen2.5-math`.
     /// - `timeout_secs`: Timeout en segundos. Por defecto 60.
     pub fn new(base_url: Option<String>, api_key: Option<String>, model: Option<String>, timeout_secs: Option<u64>) -> Self {
+        let base_url = base_url.unwrap_or_else(|| "http://localhost:1234".to_string());
+
+        let mut extra_headers = Vec::new();
+        if base_url.contains("opencode.ai") {
+            extra_headers.push((
+                "x-opencode-session".to_string(),
+                format!("ses_mates_{}", uuid::Uuid::new_v4()),
+            ));
+            extra_headers.push(("User-Agent".to_string(), "mates/1.0".to_string()));
+        }
+
         Self {
-            base_url: base_url.unwrap_or_else(|| "http://localhost:1234".to_string()),
+            base_url,
             api_key: api_key.unwrap_or_default(),
-            model: model.unwrap_or_else(|| "llama3".to_string()),
+            model: model.unwrap_or_else(|| DEFAULT_LLM_MODEL.to_string()),
             timeout: Duration::from_secs(timeout_secs.unwrap_or(60)),
+            extra_headers,
         }
     }
 
@@ -73,6 +91,7 @@ impl OpenAICompatibleProvider {
             &client,
             &url,
             &self.api_key,
+            &self.extra_headers,
             &request,
             "openai-compatible",
             &self.model,
@@ -155,6 +174,7 @@ impl OpenAICompatibleProvider {
             &client,
             &url,
             &self.api_key,
+            &self.extra_headers,
             &request,
             "openai-compatible",
             &self.model,

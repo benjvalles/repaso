@@ -77,6 +77,7 @@ fn strip_reasoning_content(value: &mut serde_json::Value) {
 /// - `client`: Cliente HTTP reutilizable.
 /// - `url`: URL completa del endpoint.
 /// - `api_key`: API key (se envía como Bearer si no está vacía).
+/// - `extra_headers`: Headers adicionales de la peticion (p. ej. `x-opencode-session`).
 /// - `body`: Cuerpo serializable de la petición.
 /// - `provider`: Nombre del proveedor para logs.
 /// - `model`: Nombre del modelo para logs.
@@ -87,6 +88,7 @@ pub async fn chat_request(
     client: &Client,
     url: &str,
     api_key: &str,
+    extra_headers: &[(String, String)],
     body: &impl Serialize,
     provider: &str,
     model: &str,
@@ -95,6 +97,9 @@ pub async fn chat_request(
         .header("Content-Type", "application/json");
     if !api_key.is_empty() {
         builder = builder.header("Authorization", format!("Bearer {api_key}"));
+    }
+    for (name, value) in extra_headers {
+        builder = builder.header(name, value);
     }
     let response = builder.json(body).send().await
         .map_err(|e| {
@@ -108,7 +113,10 @@ pub async fn chat_request(
         let status = response.status().as_u16();
         let text = response.text().await.unwrap_or_default();
         return match status {
-            401 | 403 => Err(format!("API key invalida ({provider})")),
+            401 | 403 => {
+                let snippet: String = text.chars().take(300).collect();
+                Err(format!("API key invalida ({provider}): {snippet}"))
+            }
             429 => Err(format!("Limite de peticiones alcanzado ({provider})")),
             _ => Err(format!("{provider} error {status}: {text}")),
         };

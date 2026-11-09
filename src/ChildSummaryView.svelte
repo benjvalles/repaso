@@ -23,6 +23,12 @@
     <h2>¡Buen trabajo, {childName}!</h2>
   </div>
 
+  {#if sessionSummary.level_up}
+    <div class="level-up-banner">
+      <p>¡Has subido de nivel! Tu esfuerzo esta dando frutos, {childName}.</p>
+    </div>
+  {/if}
+
   <div class="stats-grid">
     <div class="stat-card">
       <span class="stat-number">{sessionSummary.session.correct_count}</span>
@@ -74,3 +80,21 @@
 
   <button type="button" onclick={() => onGoHome()}>Volver al inicio</button>
 </section>
+
+<style>
+  .level-up-banner {
+    padding: 18px 20px;
+    border-radius: 20px;
+    background: linear-gradient(135deg, #e6f7ea, #f7f1e6);
+    border: 2px solid #2d7a3a;
+    text-align: center;
+    margin-bottom: 8px;
+  }
+
+  .level-up-banner p {
+    margin: 0;
+    font-weight: 800;
+    font-size: 1.1rem;
+    color: #2d7a3a;
+  }
+</style>
