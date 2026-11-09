@@ -49,17 +49,17 @@ fn get_app_status(state: State<'_, AppState>) -> Result<AppStatus, String> {
     let adult_unlocked = *state
         .adult_unlocked
         .lock()
-        .map_err(|_| "No se pudo comprobar la sesion adulta")?;
+        .map_err(|_| "No se pudo comprobar la sesión adulta")?;
     let llm_config = state
         .llm_config
         .lock()
-        .map_err(|_| "No se pudo leer la configuracion LLM")?
+        .map_err(|_| "No se pudo leer la configuración LLM")?
         .clone();
 
     let cloud_session = state
         .cloud_session
         .lock()
-        .map_err(|_| "No se pudo leer la sesion cloud")?
+        .map_err(|_| "No se pudo leer la sesión cloud")?
         .clone();
 
     let baserow_ok = state
@@ -103,7 +103,7 @@ fn setup_guardian_pin(pin: String, state: State<'_, AppState>) -> Result<(), Str
     }
     let pin_hash = hash_pin(&pin)?;
     set_setting(&db, PIN_SETTING_KEY, &pin_hash)?;
-    *state.adult_unlocked.lock().map_err(|_| "No se pudo iniciar la sesion adulta")? = true;
+    *state.adult_unlocked.lock().map_err(|_| "No se pudo iniciar la sesión adulta")? = true;
     Ok(())
 }
 
@@ -111,7 +111,7 @@ fn setup_guardian_pin(pin: String, state: State<'_, AppState>) -> Result<(), Str
 /// Verifica el PIN de adulto y desbloquea el area adulta si es correcto.
 ///
 /// # Parámetros
-/// - `pin`: PIN numerico a verificar.
+/// - `pin`: PIN numérico a verificar.
 /// - `state`: Contexto de estado compartido `AppState`.
 ///
 /// # Retorna
@@ -123,7 +123,7 @@ fn verify_guardian_pin(pin: String, state: State<'_, AppState>) -> Result<bool, 
     };
     let valid = verify_pin(&pin, &pin_hash)?;
     if valid {
-        *state.adult_unlocked.lock().map_err(|_| "No se pudo iniciar la sesion adulta")? = true;
+        *state.adult_unlocked.lock().map_err(|_| "No se pudo iniciar la sesión adulta")? = true;
     }
     Ok(valid)
 }
@@ -163,8 +163,8 @@ fn reset_local_data(confirm_phrase: String, state: State<'_, AppState>) -> Resul
     db.execute("DELETE FROM session_questions", []).map_err(|err| format!("No se pudieron borrar preguntas: {err}"))?;
     db.execute("DELETE FROM sessions", []).map_err(|err| format!("No se pudieron borrar sesiones: {err}"))?;
     db.execute("DELETE FROM profiles", []).map_err(|err| format!("No se pudieron borrar los perfiles: {err}"))?;
-    db.execute("DELETE FROM app_settings", []).map_err(|err| format!("No se pudo borrar la configuracion: {err}"))?;
-    *state.adult_unlocked.lock().map_err(|_| "No se pudo reiniciar la sesion adulta")? = false;
+    db.execute("DELETE FROM app_settings", []).map_err(|err| format!("No se pudo borrar la configuración: {err}"))?;
+    *state.adult_unlocked.lock().map_err(|_| "No se pudo reiniciar la sesión adulta")? = false;
     Ok(())
 }
 
@@ -369,27 +369,27 @@ fn list_deleted_profiles(state: State<'_, AppState>) -> Result<Vec<Profile>, Str
 // ==================== LLM CONFIG ====================
 
 #[tauri::command]
-/// Devuelve la configuracion actual del proveedor LLM.
+/// Devuelve la configuración actual del proveedor LLM.
 ///
 /// # Parámetros
 /// - `state`: Contexto de estado compartido `AppState`.
 ///
 /// # Retorna
-/// Configuracion LLM actual (`LLMConfig`).
+/// configuración LLM actual (`LLMConfig`).
 fn get_llm_config(state: State<'_, AppState>) -> Result<LLMConfig, String> {
-    let config = state.llm_config.lock().map_err(|_| "No se pudo leer la configuracion LLM")?;
+    let config = state.llm_config.lock().map_err(|_| "No se pudo leer la configuración LLM")?;
     Ok(config.clone())
 }
 
 #[tauri::command]
-/// Actualiza la configuracion del proveedor LLM y reconstruye el cliente.
+/// Actualiza la configuración del proveedor LLM y reconstruye el cliente.
 ///
 /// # Parámetros
-/// - `request`: Datos de configuracion (`LLMConfigRequest`).
+/// - `request`: Datos de configuración (`LLMConfigRequest`).
 /// - `state`: Contexto de estado compartido `AppState`.
 ///
 /// # Retorna
-/// La configuracion guardada.
+/// La configuración guardada.
 fn set_llm_config(request: LLMConfigRequest, state: State<'_, AppState>) -> Result<LLMConfig, String> {
     require_adult_unlocked(&state)?;
     let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
@@ -404,7 +404,7 @@ fn set_llm_config(request: LLMConfigRequest, state: State<'_, AppState>) -> Resu
         base_url: request.base_url,
         api_key: request.api_key,
     };
-    *state.llm_config.lock().map_err(|_| "No se pudo guardar la configuracion LLM")? = config.clone();
+    *state.llm_config.lock().map_err(|_| "No se pudo guardar la configuración LLM")? = config.clone();
 
     let provider = build_provider(&config);
     *state.llm_provider.lock().map_err(|_| "No se pudo asignar el proveedor LLM")? = Some(provider);
@@ -413,16 +413,23 @@ fn set_llm_config(request: LLMConfigRequest, state: State<'_, AppState>) -> Resu
 }
 
 #[tauri::command]
-/// Prueba la conexion con el proveedor LLM generando una pregunta de ejemplo.
+/// Prueba la conexión con el proveedor LLM generando una pregunta de ejemplo.
+/// Usa la configuración enviada por el formulario, sin guardarla.
 ///
 /// # Parámetros
+/// - `request`: Configuración LLM editada en el formulario (`LLMConfigRequest`).
 /// - `state`: Contexto de estado compartido `AppState`.
 ///
 /// # Retorna
-/// Mensaje de confirmacion con la pregunta generada, o un error.
-fn test_llm_connection(state: State<'_, AppState>) -> Result<String, String> {
-    let provider_guard = state.llm_provider.lock().map_err(|_| "No se pudo acceder al proveedor LLM")?;
-    let provider = provider_guard.as_ref().ok_or("No hay proveedor LLM configurado")?;
+/// Mensaje de confirmación con la pregunta generada, o un error.
+fn test_llm_connection(request: LLMConfigRequest, state: State<'_, AppState>) -> Result<String, String> {
+    let config = LLMConfig {
+        provider: request.provider,
+        model: request.model,
+        base_url: request.base_url,
+        api_key: request.api_key,
+    };
+    let provider = build_provider(&config);
     let locale = state.locale.lock().map_err(|_| "No se pudo acceder al locale")?.clone();
 
     let rt = tokio::runtime::Runtime::new().map_err(|err| format!("No se pudo crear runtime: {err}"))?;
@@ -495,14 +502,14 @@ async fn chat_message(request: ChatMessageRequest, state: State<'_, AppState>) -
 // ==================== SESSIONS ====================
 
 #[tauri::command]
-/// Inicia una nueva sesion de practica para un perfil y genera la primera pregunta.
+/// Inicia una nueva sesión de practica para un perfil y genera la primera pregunta.
 ///
 /// # Parámetros
 /// - `profile_id`: ID del perfil de alumno.
 /// - `state`: Contexto de estado compartido `AppState`.
 ///
 /// # Retorna
-/// Informacion de la sesion recien creada y la primera pregunta.
+/// Información de la sesión recién creada y la primera pregunta.
 async fn start_session(profile_id: String, state: State<'_, AppState>) -> Result<StartSessionResponse, String> {
     let (profile, session_id) = {
         let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
@@ -513,7 +520,7 @@ async fn start_session(profile_id: String, state: State<'_, AppState>) -> Result
             "INSERT INTO sessions (id, profile_id, status, total_questions, questions_answered, correct_count, current_question_index, started_at)
              VALUES (?1, ?2, 'active', 10, 0, 0, 0, ?3)",
             params![session_id, profile_id, now],
-        ).map_err(|err| format!("No se pudo crear la sesion: {err}"))?;
+        ).map_err(|err| format!("No se pudo crear la sesión: {err}"))?;
         (profile, session_id)
     };
 
@@ -527,7 +534,7 @@ async fn start_session(profile_id: String, state: State<'_, AppState>) -> Result
 }
 
 #[tauri::command]
-/// Crea una sesion temporal y genera una pregunta para el perfil indicado.
+/// Crea una sesión temporal y genera una pregunta para el perfil indicado.
 ///
 /// # Parámetros
 /// - `request`: Datos de la solicitud (`GetQuestionRequest`).
@@ -545,7 +552,7 @@ async fn generate_question(request: GetQuestionRequest, state: State<'_, AppStat
             "INSERT INTO sessions (id, profile_id, status, total_questions, questions_answered, correct_count, current_question_index, started_at)
              VALUES (?1, ?2, 'active', 10, 0, 0, 0, ?3)",
             params![session_id, request.profile_id, now],
-        ).map_err(|err| format!("No se pudo crear sesion temporal: {err}"))?;
+        ).map_err(|err| format!("No se pudo crear sesión temporal: {err}"))?;
         (profile, session_id)
     };
 
@@ -553,7 +560,7 @@ async fn generate_question(request: GetQuestionRequest, state: State<'_, AppStat
 }
 
 #[tauri::command]
-/// Evalua la respuesta del alumno, actualiza la sesion y devuelve la siguiente pregunta si corresponde.
+/// Evalua la respuesta del alumno, actualiza la sesión y devuelve la siguiente pregunta si corresponde.
 ///
 /// # Parámetros
 /// - `request`: Datos de la respuesta (`SubmitAnswerRequest`).
@@ -690,14 +697,14 @@ fn get_explanation(question_id: String, state: State<'_, AppState>) -> Result<Ex
 }
 
 #[tauri::command]
-/// Finaliza una sesion activa y genera un resumen con estadisticas y conceptos trabajados.
+/// Finaliza una sesión activa y genera un resumen con estadisticas y conceptos trabajados.
 ///
 /// # Parámetros
-/// - `session_id`: ID de la sesion a finalizar.
+/// - `session_id`: ID de la sesión a finalizar.
 /// - `state`: Contexto de estado compartido `AppState`.
 ///
 /// # Retorna
-/// Resumen completo de la sesion (`SessionSummary`).
+/// Resumen completo de la sesión (`SessionSummary`).
 fn end_session(session_id: String, state: State<'_, AppState>) -> Result<SessionSummary, String> {
     let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
     let mut session = get_session_by_id(&db, &session_id)?;
@@ -794,7 +801,7 @@ fn get_dashboard_stats(profile_id: String, state: State<'_, AppState>) -> Result
     let total_time: u32 = 0;
 
     for row in rows {
-        let (tq, _qa, cc, _started, _ended) = row.map_err(|err| format!("Sesion invalida: {err}"))?;
+        let (tq, _qa, cc, _started, _ended) = row.map_err(|err| format!("sesión invalida: {err}"))?;
         total_sessions += 1;
         total_questions += tq as u32;
         total_correct += cc as u32;
@@ -939,7 +946,7 @@ fn export_sessions(profile_id: String, state: State<'_, AppState>) -> Result<Vec
 }
 
 #[tauri::command]
-/// Obtiene el resumen completo de una sesion (preguntas, respuestas, estadisticas)
+/// Obtiene el resumen completo de una sesión (preguntas, respuestas, estadisticas)
 /// sin modificar su estado.
 ///
 /// # Parametros
@@ -947,7 +954,7 @@ fn export_sessions(profile_id: String, state: State<'_, AppState>) -> Result<Vec
 /// - `state`: Contexto de estado compartido `AppState`.
 ///
 /// # Retorna
-/// Resumen completo de la sesion (`SessionSummary`).
+/// Resumen completo de la sesión (`SessionSummary`).
 fn get_session_summary(session_id: String, state: State<'_, AppState>) -> Result<SessionSummary, String> {
     let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
     let session = get_session_by_id(&db, &session_id)?;
@@ -1027,7 +1034,7 @@ fn list_sessions(profile_id: String, state: State<'_, AppState>) -> Result<Vec<S
 
     let mut sessions = Vec::new();
     for row in rows {
-        sessions.push(row.map_err(|err| format!("Sesion invalida: {err}"))?);
+        sessions.push(row.map_err(|err| format!("sesión invalida: {err}"))?);
     }
     Ok(sessions)
 }
@@ -1062,7 +1069,7 @@ fn list_deleted_sessions(profile_id: String, state: State<'_, AppState>) -> Resu
 
     let mut sessions = Vec::new();
     for row in rows {
-        sessions.push(row.map_err(|err| format!("Sesion eliminada invalida: {err}"))?);
+        sessions.push(row.map_err(|err| format!("sesión eliminada invalida: {err}"))?);
     }
     Ok(sessions)
 }
@@ -1101,7 +1108,7 @@ fn create_user(request: CreateUserRequest, state: State<'_, AppState>) -> Result
 /// Autentica un usuario profesional (tutor/profesor) comparando el PIN contra el hash almacenado.
 ///
 /// # Parámetros
-/// - `request`: Credenciales de inicio de sesion (`LoginRequest`).
+/// - `request`: Credenciales de inicio de sesión (`LoginRequest`).
 /// - `state`: Contexto de estado compartido `AppState`.
 ///
 /// # Retorna
@@ -1588,12 +1595,12 @@ fn get_tutor_dashboard(tutor_user_id: String, state: State<'_, AppState>) -> Res
 
 // ==================== HELPERS ====================
 
-/// Genera una nueva pregunta para la sesion usando el LLM y la guarda en la base de datos.
+/// Genera una nueva pregunta para la sesión usando el LLM y la guarda en la base de datos.
 ///
 /// # Parámetros
 /// - `db`: Conexion SQLite.
 /// - `state`: Contexto de estado compartido `AppState`.
-/// - `session_id`: Identificador de la sesion activa.
+/// - `session_id`: Identificador de la sesión activa.
 /// - `profile`: Perfil del estudiante.
 ///
 /// # Retorna
@@ -1735,7 +1742,7 @@ pub fn run() {
                     let user_id = get_setting(&db, CLOUD_SESSION_KEY).ok().flatten();
                     if get_setting(&db, CLOUD_EMAIL_VERIFIED_KEY).ok().flatten().is_none() {
                         set_setting(&db, CLOUD_EMAIL_VERIFIED_KEY, "false")
-                            .map_err(|err| format!("No se pudo inicializar la configuracion: {err}"))?;
+                            .map_err(|err| format!("No se pudo inicializar la configuración: {err}"))?;
                     }
                     user_id.map(|uid| CloudSession {
                         user_id: uid,

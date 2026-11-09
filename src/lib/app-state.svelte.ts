@@ -393,7 +393,7 @@ class AppState {
   }
 
   /**
-   * Prueba la conexión con el proveedor LLM configurado.
+   * Prueba la conexión con la configuración LLM editada en el formulario (sin guardarla).
    * Almacena el resultado en `testResult` o el error en `error`.
    */
   testLLM = async () => {
@@ -401,7 +401,7 @@ class AppState {
     this.error = ""
     await this.withServerWait(async () => {
       try {
-        this.testResult = await invoke<string>("test_llm_connection")
+        this.testResult = await invoke<string>("test_llm_connection", { request: this.llmForm })
       } catch (err) {
         this.error = msg(err)
       }
