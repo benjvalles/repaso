@@ -26,6 +26,21 @@ const FIELD_QUESTIONS_UPDATED_AT: &str = "field_9679275";
 /// Almacena la configuración global de la aplicación por usuario
 const TABLE_USER_CONFIG: i64 = 1071740;
 
+/// Claves de `app_settings` que se sincronizan con la nube (config LLM).
+///
+/// El resto de claves (PIN, sesión de nube, códigos) se quedan solo en local.
+const SYNCED_SETTING_KEYS: [&str; 4] = [
+    crate::models::LLM_PROVIDER_KEY,
+    crate::models::LLM_MODEL_KEY,
+    crate::models::LLM_BASE_URL_KEY,
+    crate::models::LLM_API_KEY_KEY,
+];
+
+/// Indica si una clave de `app_settings` debe sincronizarse con la nube.
+fn is_synced_setting(key: &str) -> bool {
+    SYNCED_SETTING_KEYS.contains(&key)
+}
+
 /// ID de la tabla de perfiles de usuario en Baserow
 ///
 /// Almacena los datos de los perfiles de usuario (display_name, school_year, nivel, etc.)
@@ -64,7 +79,7 @@ fn row_id(value: &Value) -> i64 {
 /// # Proceso
 /// 1. Prepara una sentencia SQL para seleccionar key, value y updated_at desde app_settings
 /// 2. Ejecuta la consulta y mapea cada fila a una tupla (String, String, String)
-/// 3. Filtra las filas donde la clave está vacía
+/// 3. Filtra las filas donde la clave está vacía o no es una clave LLM sincronizable
 /// 4. Retorna el vector de configuraciones leídas
 ///
 /// # Retorna
@@ -84,7 +99,7 @@ fn read_local_app_settings(db: &Connection) -> Result<Vec<(String, String, Strin
         })
         .map_err(|e| format!("Error leyendo config local: {e}"))?
         .filter_map(|r| r.ok())
-        .filter(|(k, _, _)| !k.is_empty())
+        .filter(|(k, _, _)| !k.is_empty() && is_synced_setting(k))
         .collect();
     Ok(rows)
 }
@@ -188,7 +203,7 @@ async fn sync_config_table(
         .into_iter()
         .filter(|r| {
             r["field_9480689"].as_str().map(|s| !s.is_empty()).unwrap_or(false)
-            && r["field_9480705"].as_str().map(|s| !s.is_empty()).unwrap_or(false)
+            && r["field_9480705"].as_str().map(|s| is_synced_setting(s)).unwrap_or(false)
         })
         .collect();
 
@@ -1636,7 +1651,7 @@ async fn force_sync_config_table(
         .into_iter()
         .filter(|r| {
             r["field_9480689"].as_str().map(|s| !s.is_empty()).unwrap_or(false)
-            && r["field_9480705"].as_str().map(|s| !s.is_empty()).unwrap_or(false)
+            && r["field_9480705"].as_str().map(|s| is_synced_setting(s)).unwrap_or(false)
         })
         .collect();
 

@@ -745,7 +745,7 @@ if (appState.cloudStatus.connected && appState.cloudStatus.auto_login) {
 |                                   |
 |  Nombre:     [_____________]     |
 |  Email:      [_____________]     |
-|  Contrasena: [_____________]     |
+|  contraseña: [_____________]     |
 |  Confirmar:  [_____________]     |
 |                                   |
 |  [ ] Acepto que mis datos se     |

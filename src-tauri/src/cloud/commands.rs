@@ -8,6 +8,7 @@ use rand_core::RngCore;
 
 use crate::email::{Recipient, SendEmailRequest, Sender};
 use crate::helpers::{get_setting, set_setting};
+use crate::llm::commands::{build_provider, load_llm_config};
 use crate::models::{
     CloudLoginRequest, RegisterRequest,
     CLOUD_AUTO_LOGIN_KEY, CLOUD_EMAIL_KEY, CLOUD_EMAIL_VERIFIED_KEY,
@@ -28,21 +29,43 @@ fn generate_verification_code() -> String {
     format!("{:06}", code)
 }
 
-/// Registra una nueva cuenta en la nube (Baserow) desde la aplicacion.
+/// Recarga la configuracion LLM desde SQLite tras una sincronizacion.
 ///
-/// Valida los campos, verifica que el email no exista, hashea la contrasena con Argon2,
-/// crea el registro en Baserow, guarda la sesion localmente y envia un codigo de
-/// verificacion por email (best-effort).
+/// La descarga escribe solo en la BD; sin esta recarga, `state.llm_config`
+/// y `state.llm_provider` mantendrian los valores previos hasta reiniciar.
 ///
 /// # Argumentos
 ///
-/// * `request` - Datos de registro: nombre, email, contrasena y consentimiento.
+/// * `state` - Estado compartido de Tauri.
+fn reload_llm_config(state: &State<'_, AppState>) {
+    let config = {
+        let Ok(db) = state.db.lock() else { return };
+        load_llm_config(&db)
+    };
+    let provider = build_provider(&config);
+    if let Ok(mut cfg) = state.llm_config.lock() {
+        *cfg = config;
+    }
+    if let Ok(mut prov) = state.llm_provider.lock() {
+        *prov = Some(provider);
+    }
+}
+
+/// Registra una nueva cuenta en la nube (Baserow) desde la aplicación.
+///
+/// Valida los campos, verifica que el email no exista, hashea la contraseña con Argon2,
+/// crea el registro en Baserow, guarda la sesión localmente y envía un código de
+/// verificación por email (best-effort).
+///
+/// # Argumentos
+///
+/// * `request` - Datos de registro: nombre, email, contraseña y consentimiento.
 /// * `state` - Estado compartido de Tauri con acceso a base de datos, Baserow y email.
 ///
 /// # Retorna
 ///
-/// * `Ok(CloudSession)` con los datos de la sesion creada.
-/// * `Err(String)` si falla la validacion, la creacion en Baserow o el acceso interno.
+/// * `Ok(CloudSession)` con los datos de la sesión creada.
+/// * `Err(String)` si falla la validación, la creación en Baserow o el acceso interno.
 #[tauri::command]
 pub async fn register_account(
     request: RegisterRequest,
@@ -55,7 +78,7 @@ pub async fn register_account(
         return Err("Email invalido".to_string());
     }
     if request.password.len() < 8 {
-        return Err("La contrasena debe tener al menos 8 caracteres".to_string());
+        return Err("La contraseña debe tener al menos 8 caracteres".to_string());
     }
     if !request.consent {
         return Err("Debes aceptar el consentimiento de privacidad".to_string());
@@ -80,7 +103,7 @@ pub async fn register_account(
     let argon2 = Argon2::default();
     let password_hash = argon2
         .hash_password(request.password.as_bytes(), &salt)
-        .map_err(|e| format!("Error hasheando contrasena: {e}"))?
+        .map_err(|e| format!("Error hasheando contraseña: {e}"))?
         .to_string();
 
     let now = Utc::now().to_rfc3339();
@@ -172,14 +195,14 @@ pub async fn register_account(
     Ok(session)
 }
 
-/// Inicia sesion en la nube validando email y contrasena contra Baserow.
+/// Inicia sesion en la nube validando email y contraseña contra Baserow.
 ///
-/// Verifica la contrasena con Argon2, recupera el nombre y el estado de verificacion
+/// Verifica la contraseña con Argon2, recupera el nombre y el estado de verificacion
 /// del email, guarda la sesion localmente y la retorna.
 ///
 /// # Argumentos
 ///
-/// * `request` - Credenciales: email y contrasena.
+/// * `request` - Credenciales: email y contraseña.
 /// * `state` - Estado compartido de Tauri.
 ///
 /// # Retorna
@@ -195,7 +218,7 @@ pub async fn login_account(
         return Err("Email invalido".to_string());
     }
     if request.password.is_empty() {
-        return Err("La contrasena no puede estar vacia".to_string());
+        return Err("La contraseña no puede estar vacia".to_string());
     }
 
     let client = state
@@ -216,11 +239,11 @@ pub async fn login_account(
         .ok_or("Error leyendo datos de la cuenta")?;
 
     let parsed_hash = PasswordHash::new(stored_hash)
-        .map_err(|e| format!("Error al verificar contrasena: {e}"))?;
+        .map_err(|e| format!("Error al verificar contraseña: {e}"))?;
     let argon2 = Argon2::default();
     argon2
         .verify_password(request.password.as_bytes(), &parsed_hash)
-        .map_err(|_| "Email o contrasena incorrectos".to_string())?;
+        .map_err(|_| "Email o contraseña incorrectos".to_string())?;
 
     let email_verified = account["field_9645672"].as_bool().unwrap_or(false);
     let name = account["field_9480701"].as_str().unwrap_or("Usuario");
@@ -339,6 +362,8 @@ pub async fn sync_all_data(state: State<'_, AppState>) -> Result<SyncResult, Str
         set_setting(&db, CLOUD_LAST_SYNC_KEY, &now)?;
     }
 
+    reload_llm_config(&state);
+
     Ok(result)
 }
 
@@ -376,6 +401,8 @@ pub async fn force_sync_from_cloud(state: State<'_, AppState>) -> Result<SyncRes
         let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
         set_setting(&db, CLOUD_LAST_SYNC_KEY, &now)?;
     }
+
+    reload_llm_config(&state);
 
     Ok(result)
 }

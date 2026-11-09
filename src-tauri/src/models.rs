@@ -418,7 +418,7 @@ pub trait HasAdultUnlocked {
 ///
 /// * `name` - Nombre del usuario.
 /// * `email` - Correo electronico del usuario.
-/// * `password` - Contrasena de acceso.
+/// * `password` - contraseña de acceso.
 /// * `consent` - Consentimiento para el tratamiento de datos.
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
@@ -433,7 +433,7 @@ pub struct RegisterRequest {
 /// # Campos
 ///
 /// * `email` - Correo electronico del usuario.
-/// * `password` - Contrasena de acceso.
+/// * `password` - contraseña de acceso.
 #[derive(Debug, Deserialize)]
 pub struct CloudLoginRequest {
     pub email: String,

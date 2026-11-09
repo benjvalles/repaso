@@ -388,6 +388,11 @@ class AppState {
     await this.run(async () => {
       await invoke("set_llm_config", { request: this.llmForm })
       this.notice = "Configuración LLM guardada"
+      if (this.cloudStatus.connected && this.cloudStatus.email_verified) {
+        const result = await invoke<SyncResult>("sync_all_data")
+        const errs = result.errors.length > 0 ? ` Errores: ${result.errors.join(", ")}` : ""
+        this.notice += ` y sincronizado (config: ${result.config_synced})${errs}`
+      }
       await this.refreshStatus()
     })
   }
@@ -631,8 +636,8 @@ class AppState {
     const f = this.cloudForm
     if (f.name.length < 2) { this.error = "El nombre debe tener al menos 2 caracteres"; return }
     if (!f.email.includes('@')) { this.error = "Email invalido"; return }
-    if (f.password.length < 8) { this.error = "La contrasena debe tener al menos 8 caracteres"; return }
-    if (f.password !== f.confirmPassword) { this.error = "Las contrasenas no coinciden"; return }
+    if (f.password.length < 8) { this.error = "La contraseña debe tener al menos 8 caracteres"; return }
+    if (f.password !== f.confirmPassword) { this.error = "Las contraseñas no coinciden"; return }
     if (!f.consent) { this.error = "Debes aceptar el consentimiento de privacidad"; return }
 
     await this.run(async () => {
@@ -654,7 +659,7 @@ class AppState {
     e.preventDefault()
     const f = this.cloudForm
     if (!f.email.includes('@')) { this.error = "Email invalido"; return }
-    if (!f.password) { this.error = "La contrasena no puede estar vacia"; return }
+    if (!f.password) { this.error = "La contraseña no puede estar vacia"; return }
 
     await this.run(async () => {
       await invoke("login_account", { request: { email: f.email, password: f.password } })
