@@ -71,6 +71,27 @@ fn row_id(value: &Value) -> i64 {
     value["id"].as_i64().unwrap_or(0)
 }
 
+/// Comprueba si existe una fila por su id en una tabla local (borrada o no).
+///
+/// Se usa antes de insertar sesiones y preguntas para no violar la foreign key
+/// cuando el padre no se ha descargado.
+///
+/// # Argumentos
+/// * `db` - Conexion SQLite local.
+/// * `tabla` - Nombre de la tabla (`profiles` o `sessions`).
+/// * `id` - Identificador de la fila padre.
+///
+/// # Retorna
+/// - `Ok(true)` si la fila existe.
+/// - `Ok(false)` si no existe.
+/// - `Err(String)` si fallo la consulta.
+fn row_exists(db: &Connection, tabla: &str, id: &str) -> Result<bool, String> {
+    let count: i64 = db
+        .query_row(&format!("SELECT COUNT(*) FROM {tabla} WHERE id = ?1"), params![id], |row| row.get(0))
+        .map_err(|e| format!("Error comprobando {tabla}: {e}"))?;
+    Ok(count > 0)
+}
+
 /// Lee todas las configuraciones de la aplicación desde la base de datos local
 ///
 /// # Argumentos
@@ -310,8 +331,22 @@ fn write_remote_profiles(
                 .map_err(|e| format!("Error insertando perfil remoto: {e}"))?;
                 synced += 1;
             }
-            // No existe local, esta borrado remoto -> saltar
-            (None, false) => {}
+            // No existe local, esta borrado remoto -> insertar marcado como borrado:
+            // mantiene la FK de sus sesiones y permite recuperarlo en este dispositivo
+            (None, false) => {
+                db.execute(
+                    "INSERT OR IGNORE INTO profiles
+                     (id, display_name, school_year, age, level_mode,
+                      current_level, manual_prompt, created_at, updated_at, deleted_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        rem_profile_id, rem_display, rem_school, rem_age,
+                        rem_lm, rem_curr, rem_manual, rem_cr, rem_updated, rem_deleted,
+                    ],
+                )
+                .map_err(|e| format!("Error insertando perfil remoto borrado: {e}"))?;
+                synced += 1;
+            }
             // Existe local, esta borrado remoto -> si la eliminacion remota es mas reciente, borrar local
             (Some(local), false) => {
                 let local_updated = &local.8;
@@ -667,8 +702,10 @@ fn write_remote_sessions(
     db: &Connection,
     remote_rows: &[Value],
     local_rows: &[LocalSessionRow],
+    errors: &mut Vec<String>,
 ) -> Result<u32, String> {
     let mut synced = 0u32;
+    let mut ignored: Vec<String> = Vec::new();
     for rem in remote_rows {
         let rem_session_id = rem["field_9480695"].as_str().unwrap_or("");
         if rem_session_id.is_empty() { continue; }
@@ -684,6 +721,10 @@ fn write_remote_sessions(
             (None, true) => {
                 let rem_profile_id = rem["field_9480718"].as_str().unwrap_or("");
                 if rem_profile_id.is_empty() { continue; }
+                if !row_exists(db, "profiles", rem_profile_id)? {
+                    ignored.push(rem_session_id.to_string());
+                    continue;
+                }
                 let rem_status = rem["field_9480719"].as_str().unwrap_or("active");
                 let rem_total = value_to_i64(&rem["field_9480720"]).unwrap_or(10);
                 let rem_answered = value_to_i64(&rem["field_9480721"]).unwrap_or(0);
@@ -724,6 +765,10 @@ fn write_remote_sessions(
                 let local_updated = &local.9;
                 if rem_updated > local_updated.as_str() {
                     let rem_profile_id = rem["field_9480718"].as_str().unwrap_or("");
+                    if rem_profile_id.is_empty() || !row_exists(db, "profiles", rem_profile_id)? {
+                        ignored.push(rem_session_id.to_string());
+                        continue;
+                    }
                     let rem_status = rem["field_9480719"].as_str().unwrap_or("active");
                     let rem_total = value_to_i64(&rem["field_9480720"]).unwrap_or(10);
                     let rem_answered = value_to_i64(&rem["field_9480721"]).unwrap_or(0);
@@ -746,6 +791,13 @@ fn write_remote_sessions(
                 }
             }
         }
+    }
+    if !ignored.is_empty() {
+        errors.push(format!(
+            "{} sesiones ignoradas por no tener perfil en local: {}",
+            ignored.len(),
+            ignored.join(", ")
+        ));
     }
     Ok(synced)
 }
@@ -770,6 +822,7 @@ async fn sync_sessions_table(
     client: &BaserowClient,
     db: &Mutex<Connection>,
     user_id: &str,
+    errors: &mut Vec<String>,
 ) -> Result<u32, String> {
     let local_rows = {
         let db = db.lock().map_err(|e| format!("Error de base de datos: {e}"))?;
@@ -790,7 +843,7 @@ async fn sync_sessions_table(
 
     {
         let db = db.lock().map_err(|e| format!("Error de base de datos: {e}"))?;
-        synced += write_remote_sessions(&db, &remote_rows, &local_rows)?;
+        synced += write_remote_sessions(&db, &remote_rows, &local_rows, errors)?;
     }
 
     Ok(synced)
@@ -1044,8 +1097,10 @@ fn write_remote_session_questions(
     db: &Connection,
     remote_rows: &[Value],
     local_rows: &[LocalQuestionRow],
+    errors: &mut Vec<String>,
 ) -> Result<u32, String> {
     let mut synced = 0u32;
+    let mut ignored: Vec<String> = Vec::new();
     for rem in remote_rows {
         let rem_question_id = rem["field_9480698"].as_str().unwrap_or("");
         if rem_question_id.is_empty() { continue; }
@@ -1061,6 +1116,10 @@ fn write_remote_session_questions(
             (None, true) => {
                 let rem_session = rem["field_9480727"].as_str().unwrap_or("");
                 if rem_session.is_empty() { continue; }
+                if !row_exists(db, "sessions", rem_session)? {
+                    ignored.push(rem_question_id.to_string());
+                    continue;
+                }
                 let rem_text = rem["field_9480728"].as_str().unwrap_or("");
                 let rem_correct = rem["field_9480729"].as_str().unwrap_or("");
                 let rem_student = rem["field_9480730"].as_str().map(String::from);
@@ -1107,6 +1166,10 @@ fn write_remote_session_questions(
                 let local_updated = &local.13;
                 if rem_updated > local_updated.as_str() {
                     let rem_session = rem["field_9480727"].as_str().unwrap_or("");
+                    if rem_session.is_empty() || !row_exists(db, "sessions", rem_session)? {
+                        ignored.push(rem_question_id.to_string());
+                        continue;
+                    }
                     let rem_text = rem["field_9480728"].as_str().unwrap_or("");
                     let rem_correct = rem["field_9480729"].as_str().unwrap_or("");
                     let rem_student = rem["field_9480730"].as_str().map(String::from);
@@ -1137,6 +1200,13 @@ fn write_remote_session_questions(
             }
         }
     }
+    if !ignored.is_empty() {
+        errors.push(format!(
+            "{} preguntas ignoradas por no tener sesion en local: {}",
+            ignored.len(),
+            ignored.join(", ")
+        ));
+    }
     Ok(synced)
 }
 
@@ -1160,6 +1230,7 @@ async fn sync_session_questions_table(
     client: &BaserowClient,
     db: &Mutex<Connection>,
     user_id: &str,
+    errors: &mut Vec<String>,
 ) -> Result<u32, String> {
     let local_rows = {
         let db = db.lock().map_err(|e| format!("Error de base de datos: {e}"))?;
@@ -1180,7 +1251,7 @@ async fn sync_session_questions_table(
 
     {
         let db = db.lock().map_err(|e| format!("Error de base de datos: {e}"))?;
-        synced += write_remote_session_questions(&db, &remote_rows, &local_rows)?;
+        synced += write_remote_session_questions(&db, &remote_rows, &local_rows, errors)?;
     }
 
     Ok(synced)
@@ -1231,12 +1302,12 @@ pub async fn sync_all(
         0
     });
 
-    let sessions = sync_sessions_table(client, db, user_id).await.unwrap_or_else(|e| {
+    let sessions = sync_sessions_table(client, db, user_id, &mut errors).await.unwrap_or_else(|e| {
         errors.push(format!("sessions: {e}"));
         0
     });
 
-    let questions = sync_session_questions_table(client, db, user_id).await.unwrap_or_else(|e| {
+    let questions = sync_session_questions_table(client, db, user_id, &mut errors).await.unwrap_or_else(|e| {
         errors.push(format!("session_questions: {e}"));
         0
     });
@@ -1476,11 +1547,25 @@ fn force_write_remote_profiles(
                     continue
                 }
             }
-            db.execute(
+            let updated = db.execute(
                 "UPDATE profiles SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
                 params![rem_deleted, rem_profile_id],
             )
             .map_err(|e| format!("Error aplicando eliminacion remota de perfil: {e}"))?;
+            if updated == 0 {
+                // No existe local: insertarlo ya borrado para conservar la FK de sus sesiones
+                db.execute(
+                    "INSERT OR IGNORE INTO profiles
+                     (id, display_name, school_year, age, level_mode,
+                      current_level, manual_prompt, created_at, updated_at, deleted_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        rem_profile_id, rem_display, rem_school, rem_age,
+                        rem_lm, rem_curr, rem_manual, rem_cr, rem_updated, rem_deleted,
+                    ],
+                )
+                .map_err(|e| format!("Error insertando perfil remoto borrado: {e}"))?;
+            }
             synced += 1;
         } else {
             db.execute(
@@ -1510,8 +1595,10 @@ fn force_write_remote_sessions(
     db: &Connection,
     remote_rows: &[Value],
     local_rows: &[LocalSessionRow],
+    errors: &mut Vec<String>,
 ) -> Result<u32, String> {
     let mut synced = 0u32;
+    let mut ignored: Vec<String> = Vec::new();
     for rem in remote_rows {
         let rem_session_id = rem["field_9480695"].as_str().unwrap_or("");
         if rem_session_id.is_empty() { continue; }
@@ -1533,6 +1620,10 @@ fn force_write_remote_sessions(
             synced += 1;
         } else {
             let rem_profile_id = rem["field_9480718"].as_str().unwrap_or("");
+            if rem_profile_id.is_empty() || !row_exists(db, "profiles", rem_profile_id)? {
+                ignored.push(rem_session_id.to_string());
+                continue;
+            }
             let rem_status = rem["field_9480719"].as_str().unwrap_or("active");
             let rem_total = value_to_i64(&rem["field_9480720"]).unwrap_or(10);
             let rem_answered = value_to_i64(&rem["field_9480721"]).unwrap_or(0);
@@ -1562,6 +1653,13 @@ fn force_write_remote_sessions(
             synced += 1;
         }
     }
+    if !ignored.is_empty() {
+        errors.push(format!(
+            "{} sesiones ignoradas por no tener perfil en local: {}",
+            ignored.len(),
+            ignored.join(", ")
+        ));
+    }
     Ok(synced)
 }
 
@@ -1570,8 +1668,10 @@ fn force_write_remote_session_questions(
     db: &Connection,
     remote_rows: &[Value],
     local_rows: &[LocalQuestionRow],
+    errors: &mut Vec<String>,
 ) -> Result<u32, String> {
     let mut synced = 0u32;
+    let mut ignored: Vec<String> = Vec::new();
     for rem in remote_rows {
         let rem_question_id = rem["field_9480698"].as_str().unwrap_or("");
         if rem_question_id.is_empty() { continue; }
@@ -1593,6 +1693,10 @@ fn force_write_remote_session_questions(
             synced += 1;
         } else {
             let rem_session = rem["field_9480727"].as_str().unwrap_or("");
+            if rem_session.is_empty() || !row_exists(db, "sessions", rem_session)? {
+                ignored.push(rem_question_id.to_string());
+                continue;
+            }
             let rem_text = rem["field_9480728"].as_str().unwrap_or("");
             let rem_correct = rem["field_9480729"].as_str().unwrap_or("");
             let rem_student = rem["field_9480730"].as_str().map(String::from);
@@ -1628,6 +1732,13 @@ fn force_write_remote_session_questions(
             .map_err(|e| format!("Error sobrescribiendo pregunta desde remoto: {e}"))?;
             synced += 1;
         }
+    }
+    if !ignored.is_empty() {
+        errors.push(format!(
+            "{} preguntas ignoradas por no tener sesion en local: {}",
+            ignored.len(),
+            ignored.join(", ")
+        ));
     }
     Ok(synced)
 }
@@ -1696,6 +1807,7 @@ async fn force_sync_sessions_table(
     client: &BaserowClient,
     db: &Mutex<Connection>,
     user_id: &str,
+    errors: &mut Vec<String>,
 ) -> Result<u32, String> {
     let local_rows = {
         let db = db.lock().map_err(|e| format!("Error de base de datos: {e}"))?;
@@ -1714,7 +1826,7 @@ async fn force_sync_sessions_table(
     let mut synced = upload_new_local_sessions(client, &local_rows, &remote_rows, user_id).await?;
     {
         let db = db.lock().map_err(|e| format!("Error de base de datos: {e}"))?;
-        synced += force_write_remote_sessions(&db, &remote_rows, &local_rows)?;
+        synced += force_write_remote_sessions(&db, &remote_rows, &local_rows, errors)?;
     }
     Ok(synced)
 }
@@ -1724,6 +1836,7 @@ async fn force_sync_session_questions_table(
     client: &BaserowClient,
     db: &Mutex<Connection>,
     user_id: &str,
+    errors: &mut Vec<String>,
 ) -> Result<u32, String> {
     let local_rows = {
         let db = db.lock().map_err(|e| format!("Error de base de datos: {e}"))?;
@@ -1742,7 +1855,7 @@ async fn force_sync_session_questions_table(
     let mut synced = upload_new_local_session_questions(client, &local_rows, &remote_rows, user_id).await?;
     {
         let db = db.lock().map_err(|e| format!("Error de base de datos: {e}"))?;
-        synced += force_write_remote_session_questions(&db, &remote_rows, &local_rows)?;
+        synced += force_write_remote_session_questions(&db, &remote_rows, &local_rows, errors)?;
     }
     Ok(synced)
 }
@@ -1768,12 +1881,12 @@ pub async fn force_sync_all(
         0
     });
 
-    let sessions = force_sync_sessions_table(client, db, user_id).await.unwrap_or_else(|e| {
+    let sessions = force_sync_sessions_table(client, db, user_id, &mut errors).await.unwrap_or_else(|e| {
         errors.push(format!("sessions: {e}"));
         0
     });
 
-    let questions = force_sync_session_questions_table(client, db, user_id).await.unwrap_or_else(|e| {
+    let questions = force_sync_session_questions_table(client, db, user_id, &mut errors).await.unwrap_or_else(|e| {
         errors.push(format!("session_questions: {e}"));
         0
     });
