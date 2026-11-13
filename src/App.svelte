@@ -84,6 +84,7 @@
         answerFeedback={appState.answerFeedback}
         showExplanation={appState.showExplanation}
         explanationData={appState.explanationData}
+        isLoadingExplanation={appState.isLoadingExplanation}
         isSubmitting={appState.isSubmitting}
         onSubmit={(answer: string) => {
           appState.studentAnswer = answer

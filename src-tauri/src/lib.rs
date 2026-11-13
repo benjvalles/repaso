@@ -628,64 +628,58 @@ async fn submit_answer(request: SubmitAnswerRequest, state: State<'_, AppState>)
 ///
 /// # Retorna
 /// Explicacion, puntos clave, pasos siguientes y pregunta reformulada (opcional).
-fn get_explanation(question_id: String, state: State<'_, AppState>) -> Result<ExplanationResponse, String> {
-    let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
-    let question = get_question_by_id(&db, &question_id)?;
-    let session = get_session_by_id(&db, &question.session_id)?;
-    let profile = get_profile_by_id(&db, &session.profile_id)?;
-    let manual_prompt = manual_prompt_for_profile(&profile);
-    let locale = state.locale.lock()
-        .map_err(|_| "No se pudo acceder al locale")?
-        .clone();
+async fn get_explanation(question_id: String, state: State<'_, AppState>) -> Result<ExplanationResponse, String> {
+    let (question, manual_prompt, locale, provider) = {
+        let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
+        let question = get_question_by_id(&db, &question_id)?;
+        let session = get_session_by_id(&db, &question.session_id)?;
+        let profile = get_profile_by_id(&db, &session.profile_id)?;
+        let manual_prompt = manual_prompt_for_profile(&profile);
+        let locale = state.locale.lock()
+            .map_err(|_| "No se pudo acceder al locale")?
+            .clone();
+        let provider = state.llm_provider.lock()
+            .map_err(|_| "No se pudo acceder al proveedor LLM")?
+            .clone();
+        (question, manual_prompt, locale, provider)
+    };
 
-    let explanation = {
-        let provider_guard = state.llm_provider.lock().map_err(|_| "No se pudo acceder al proveedor LLM")?;
-        if let Some(provider) = provider_guard.as_ref() {
-            let llm_question = LLMQuestion {
-                question: question.question_text.clone(),
-                correct_answer: question.correct_answer.clone(),
-                concept: question.concept.clone(),
-                difficulty: question.difficulty.clone(),
-            };
-            let rt = tokio::runtime::Runtime::new().map_err(|err| format!("No se pudo crear runtime: {err}"))?;
-            match rt.block_on(provider.provide_explanation(
-                &llm_question,
-                question.student_answer.as_deref().unwrap_or(""),
-                &question.correct_answer,
-                &question.concept,
-                manual_prompt.as_deref(),
-                &locale,
-            )) {
-                Ok(exp) => exp,
-                Err(_) => LLMExplanation {
-                    explanation: generate_default_explanation(&question),
-                    key_points: vec![question.concept.clone()],
-                    next_steps: vec!["Practica mas ejercicios de este tipo".to_string()],
-                },
-            }
-        } else {
-            LLMExplanation {
+    let llm_question = LLMQuestion {
+        question: question.question_text.clone(),
+        correct_answer: question.correct_answer.clone(),
+        concept: question.concept.clone(),
+        difficulty: question.difficulty.clone(),
+    };
+
+    let explanation = match provider.as_ref() {
+        Some(provider) => match provider.provide_explanation(
+            &llm_question,
+            question.student_answer.as_deref().unwrap_or(""),
+            &question.correct_answer,
+            &question.concept,
+            manual_prompt.as_deref(),
+            &locale,
+        ).await {
+            Ok(exp) => exp,
+            Err(_) => LLMExplanation {
                 explanation: generate_default_explanation(&question),
                 key_points: vec![question.concept.clone()],
                 next_steps: vec!["Practica mas ejercicios de este tipo".to_string()],
-            }
-        }
+            },
+        },
+        None => LLMExplanation {
+            explanation: generate_default_explanation(&question),
+            key_points: vec![question.concept.clone()],
+            next_steps: vec!["Practica mas ejercicios de este tipo".to_string()],
+        },
     };
 
-    let reformulated = {
-        let provider_guard = state.llm_provider.lock().map_err(|_| "No se pudo acceder al proveedor LLM")?;
-        if let Some(provider) = provider_guard.as_ref() {
-            let llm_question = LLMQuestion {
-                question: question.question_text.clone(),
-                correct_answer: question.correct_answer.clone(),
-                concept: question.concept.clone(),
-                difficulty: question.difficulty.clone(),
-            };
-            let rt = tokio::runtime::Runtime::new().map_err(|err| format!("No se pudo crear runtime: {err}"))?;
-            rt.block_on(provider.reformulate_concept(&question.concept, &llm_question, manual_prompt.as_deref(), &locale)).ok()
-        } else {
-            None
-        }
+    let reformulated = match provider.as_ref() {
+        Some(provider) => provider
+            .reformulate_concept(&question.concept, &llm_question, manual_prompt.as_deref(), &locale)
+            .await
+            .ok(),
+        None => None,
     };
 
     Ok(ExplanationResponse {

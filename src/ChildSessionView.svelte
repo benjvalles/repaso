@@ -9,6 +9,7 @@
    * @property answerFeedback - Feedback tras responder (null mientras no se haya respondido)
    * @property showExplanation - Controla la visibilidad de la explicación
    * @property explanationData - Datos de la explicación cargada
+   * @property isLoadingExplanation - Indica si se está cargando la explicación
    * @property isSubmitting - Indica si se está enviando una respuesta
    * @property onSubmit - Callback con la respuesta escrita
    * @property onLoadExplanation - Callback para cargar la explicación
@@ -20,6 +21,7 @@
     answerFeedback = null as SubmitAnswerResponse | null,
     showExplanation = false,
     explanationData = null as ExplanationResponse | null,
+    isLoadingExplanation = false,
     isSubmitting = false,
     onSubmit = (_answer: string) => {},
     onLoadExplanation = () => {},
@@ -30,6 +32,7 @@
     answerFeedback: SubmitAnswerResponse | null
     showExplanation: boolean
     explanationData: ExplanationResponse | null
+    isLoadingExplanation: boolean
     isSubmitting: boolean
     onSubmit: (answer: string) => void
     onLoadExplanation: () => void
@@ -88,7 +91,14 @@
 
       <div class="feedback-actions">
         {#if !answerFeedback.is_correct && !showExplanation}
-          <button class="secondary" type="button" onclick={() => onLoadExplanation()}>¿Por qué?</button>
+          <button class="secondary" type="button" disabled={isLoadingExplanation} onclick={() => onLoadExplanation()}>
+            {#if isLoadingExplanation}
+              <span class="btn-spinner" aria-hidden="true"></span>
+              Cargando explicación...
+            {:else}
+              ¿Por qué?
+            {/if}
+          </button>
         {/if}
         {#if answerFeedback.next_question}
           <button type="button" onclick={() => onNextQuestion()}>Siguiente pregunta →</button>
@@ -116,3 +126,17 @@
     {/if}
   </div>
 </section>
+
+<style>
+  .btn-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(36,48,68,0.25);
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: btn-spin 0.6s linear infinite;
+    vertical-align: middle;
+  }
+  @keyframes btn-spin { to { transform: rotate(360deg); } }
+</style>

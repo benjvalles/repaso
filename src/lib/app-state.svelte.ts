@@ -26,6 +26,7 @@ class AppState {
   answerFeedback = $state<SubmitAnswerResponse | null>(null)
   showExplanation = $state(false)
   explanationData = $state<ExplanationResponse | null>(null)
+  isLoadingExplanation = $state(false)
   sessionSummary = $state<SessionSummary | null>(null)
   questionStartTime = $state(0)
   isSubmitting = $state(false)
@@ -840,14 +841,18 @@ class AppState {
 
   /**
    * Carga la explicación de la pregunta actual desde el backend.
+   * `isLoadingExplanation` se activa mientras se espera la respuesta.
    */
   loadExplanation = async () => {
-    if (!this.currentQuestion) return
+    if (!this.currentQuestion || this.isLoadingExplanation) return
+    this.isLoadingExplanation = true
     try {
       this.explanationData = await invoke<ExplanationResponse>("get_explanation", { questionId: this.currentQuestion!.question_id })
       this.showExplanation = true
     } catch (err) {
       this.error = msg(err)
+    } finally {
+      this.isLoadingExplanation = false
     }
   }
 
@@ -861,6 +866,7 @@ class AppState {
     this.answerFeedback = null
     this.showExplanation = false
     this.explanationData = null
+    this.isLoadingExplanation = false
     this.studentAnswer = ""
     this.questionStartTime = Date.now()
   }
