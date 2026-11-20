@@ -1,5 +1,9 @@
 <script lang="ts">
   import { appState } from "../lib/app-state.svelte"
+  import { subjectLabel } from "../lib/helpers"
+  import type { Subject } from "../lib/types"
+
+  const SUBJECTS: Subject[] = ["mates", "lengua_espanola", "lengua_inglesa", "naturales", "personalizado"]
 </script>
 
 <form class="card stack" onsubmit={(e) => appState.saveProfile(e)}>
@@ -15,10 +19,13 @@
       <label>Nivel manual <select bind:value={appState.profileForm.manual_level}>{#each [1,2,3,4,5,6] as l}<option value={l}>{l}</option>{/each}</select></label>
     {/if}
   </div>
-  {#if appState.profileForm.level_mode === "manual"}
-    <label>Contexto pedagógico para la IA <textarea maxlength="1000" rows="4" bind:value={appState.profileForm.manual_prompt} placeholder="Ej: Tiene dificultades con multiplicaciones. Prioriza tablas y explica trucos para memorizarlas."></textarea></label>
-    <p class="muted">No escribas nombres ni datos personales. Describe solo necesidades pedagógicas.</p>
-  {/if}
+  <div class="stack">
+    <label>Profesor <select bind:value={appState.promptSubject}>{#each SUBJECTS as s}<option value={s}>{subjectLabel(s)}</option>{/each}</select></label>
+    {#key appState.promptSubject}
+      <label>Contexto pedagógico para la IA <textarea maxlength="1000" rows="4" bind:value={appState.profileForm.prompts[appState.promptSubject]} placeholder="Ej: Prioriza problemas de m.c.m. con nombres propios y contexto de transporte."></textarea></label>
+    {/key}
+    <p class="muted">Cada profesor tiene su propio contexto. No escribas nombres ni datos personales.</p>
+  </div>
   <div class="row">
     <button type="submit">{appState.profileForm.id ? "Guardar" : "Crear"}</button>
     {#if appState.profileForm.id}<button class="secondary" type="button" onclick={() => appState.profileForm = appState.emptyProfileForm()}>Cancelar</button>{/if}

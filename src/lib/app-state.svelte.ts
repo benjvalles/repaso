@@ -1,13 +1,13 @@
 import { invoke } from "@tauri-apps/api/core"
 import type {
-  AppView, AppStatus, Profile, LLMConfig, ProfileForm,
+  AppView, AppStatus, Profile, LLMConfig, ProfileForm, Subject, SubjectPrompts,
   CurrentQuestion, StartSessionResponse, SubmitAnswerResponse, ExplanationResponse,
   Session, SessionSummary,
   DashboardStats, ConceptStat, EvolutionPoint, ExportSessionRow,
   User, StudentGroup, TutorDashboard,
   Assignment, Report, CloudStatus, SyncResult,
 } from "./types"
-import { emptyProfileForm, courseLabel, courseForAge, formatTime, msg } from "./helpers"
+import { emptyProfileForm, emptyPrompts, subjectLabel, courseLabel, courseForAge, formatTime, msg } from "./helpers"
 
 class AppState {
   // =========== VIEW STATE ===========
@@ -20,6 +20,7 @@ class AppState {
 
   // =========== CHILD SESSION STATE ===========
   selectedProfileId = $state("")
+  selectedSubject = $state<Subject>("mates")
   sessionId = $state("")
   currentQuestion = $state<CurrentQuestion | null>(null)
   studentAnswer = $state("")
@@ -34,8 +35,9 @@ class AppState {
   // =========== ADULT PANEL STATE ===========
   adultTab = $state<"profiles" | "llm" | "sessions" | "dashboard" | "cloud" | "professional">("profiles")
   loginPin = $state("")
+  promptSubject = $state<Subject>("mates")
   profileForm = $state<ProfileForm>({
-    id: null, display_name: "", school_year: 1, age: "", level_mode: "automatic", manual_level: 1, manual_prompt: "",
+    id: null, display_name: "", school_year: 1, age: "", level_mode: "automatic", manual_level: 1, manual_prompt: "", prompts: emptyPrompts(),
   })
   llmForm = $state<LLMConfig>({
     provider: "ollama", model: "llama3", base_url: "http://localhost:11434", api_key: "",
@@ -233,7 +235,8 @@ class AppState {
         age: this.profileForm.age?.toInt?.() || null,
         level_mode: this.profileForm.level_mode,
         manual_level: this.profileForm.level_mode === "manual" ? Number(this.profileForm.manual_level) : null,
-        manual_prompt: this.profileForm.level_mode === "manual" ? this.profileForm.manual_prompt : null,
+        manual_prompt: null,
+        prompts: this.profileForm.prompts,
       }
       if (this.profileForm.id) {
         await invoke("update_profile", { request: { ...p, id: this.profileForm.id } })
@@ -253,14 +256,23 @@ class AppState {
   }
 
   /**
-   * Carga los datos de un perfil en el formulario de edición.
+   * Carga los datos de un perfil en el formulario de edición, incluidos sus
+   * contextos pedagógicos por profesor.
    * @param p - Perfil a editar
    */
-  editProfile = (p: Profile) => {
+  editProfile = async (p: Profile) => {
+    let prompts = emptyPrompts()
+    try {
+      const loaded = await invoke<Record<string, string>>("get_profile_prompts", { profileId: p.id })
+      prompts = { ...prompts, ...loaded }
+    } catch {
+      // Sin contextos guardados: se muestran vacíos
+    }
     this.profileForm = {
       id: p.id, display_name: p.display_name, school_year: p.school_year,
-      age: p.age === null ? "" : String(p.age), level_mode: p.level_mode, manual_level: p.current_level, manual_prompt: p.manual_prompt ?? "",
+      age: p.age === null ? "" : String(p.age), level_mode: p.level_mode, manual_level: p.current_level, manual_prompt: "", prompts,
     }
+    this.promptSubject = "mates"
   }
 
   /**
@@ -791,9 +803,11 @@ class AppState {
    * Transiciona inmediatamente a child_session con un estado de carga inline
    * para evitar que el overlay del spinner bloquee la UI durante la llamada LLM.
    * @param profileId - ID del perfil infantil
+   * @param subject - Profesor (asignatura) elegido
    */
-  startSession = async (profileId: string) => {
+  startSession = async (profileId: string, subject: Subject) => {
     this.selectedProfileId = profileId
+    this.selectedSubject = subject
     this.currentQuestion = null
     this.studentAnswer = ""
     this.answerFeedback = null
@@ -801,7 +815,7 @@ class AppState {
     this.explanationData = null
     this.view = "child_session"
     try {
-      const res = await invoke<StartSessionResponse>("start_session", { profileId })
+      const res = await invoke<StartSessionResponse>("start_session", { profileId, subject })
       this.sessionId = res.session_id
       this.currentQuestion = res.first_question
       this.questionStartTime = Date.now()
@@ -889,7 +903,7 @@ class AppState {
       this.chatTypewriterTimer = null
     }
     const name = this.status?.profiles.find(p => p.id === this.selectedProfileId)?.display_name || "amigo"
-    this.chatMessages = [{ role: "assistant", content: `Hola ${name}, soy tu compañero de matematicas. Preguntame lo que quieras.` }]
+    this.chatMessages = [{ role: "assistant", content: `Hola ${name}, soy tu profesor de ${subjectLabel(this.selectedSubject)}. Preguntame lo que quieras.` }]
   }
 
   /** Envía un mensaje al LLM y muestra la respuesta con efecto typewriter */
@@ -900,7 +914,7 @@ class AppState {
     this.chatTypewriterText = ""
     try {
       const res = await invoke<{ response: string }>("chat_message", {
-        request: { message, profile_id: this.selectedProfileId },
+        request: { message, profile_id: this.selectedProfileId, subject: this.selectedSubject },
       })
       this.runTypewriter(res.response)
     } catch (err) {

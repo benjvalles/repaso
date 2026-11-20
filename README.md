@@ -113,6 +113,106 @@ Puedes verificar la firma de un APK con:
 apksigner verify --print-certs <ruta-del-apk>
 ```
 
+## Instalación en Android con adb
+
+Para instalar el APK en un dispositivo o emulador Android se usa `adb` (Android Debug Bridge), incluido en las **Android SDK Platform Tools**.
+
+### 1. Instalar las Platform Tools
+
+- **Linux (Debian/Ubuntu)**:
+  ```bash
+  sudo apt install android-tools-adb
+  ```
+- **macOS** (Homebrew):
+  ```bash
+  brew install --cask android-platform-tools
+  ```
+- **Windows**: descarga las Platform Tools desde [developer.android.com/studio/releases/platform-tools](https://developer.android.com/studio/releases/platform-tools), extrae el ZIP y añade la carpeta al `PATH`.
+
+Comprueba la instalación:
+
+```bash
+adb version
+```
+
+### 2. Activar la depuración USB en el dispositivo
+
+1. En el móvil, ve a **Ajustes → Acerca del teléfono** y pulsa 7 veces sobre "Número de compilación" para activar las opciones de desarrollador.
+2. Vuelve a **Ajustes → Sistema → Opciones para desarrolladores** y activa **Depuración USB**.
+3. Conecta el móvil al PC por USB. Acepta el diálogo "¿Permitir depuración USB?" en la pantalla del móvil (marca "Permitir siempre desde este equipo" para no repetirlo).
+
+### 3. Verificar la conexión
+
+```bash
+adb devices
+```
+
+Debe listar el dispositivo con estado `device`. Si aparece `unauthorized`, revisa el diálogo en el móvil. Si no aparece nada, prueba otro cable/puerto o instala los drivers USB del fabricante (en Windows).
+
+### 4. Instalar el APK
+
+**APK compilado localmente (release firmado):**
+
+```bash
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+```
+
+**APK descargado de GitHub Releases:**
+
+```bash
+adb install -r ~/Descargas/mates_*.apk
+```
+
+La opción `-r` reinstala/actualiza la app conservando los datos existentes. Sin `-r`, adb falla si la app ya está instalada.
+
+Para instalar en un dispositivo concreto cuando hay varios conectados:
+
+```bash
+adb -s <serial> install -r <ruta-del-apk>
+```
+
+El `<serial>` es el identificador que muestra `adb devices`.
+
+### 5. Desinstalar / reinstalar limpio
+
+Desinstalar la app (borra todos los datos locales):
+
+```bash
+adb uninstall es.benjamin.mates
+```
+
+Reinstalar desde cero:
+
+```bash
+adb uninstall es.benjamin.mates
+adb install <ruta-del-apk>
+```
+
+### 6. Comandos útiles
+
+- Ver logs de la app en tiempo real:
+  ```bash
+  adb logcat -s "Mates" "*:E"
+  ```
+- Copiar un archivo al dispositivo:
+  ```bash
+  adb push <archivo-local> /sdcard/Download/
+  ```
+- Extraer un archivo del dispositivo:
+  ```bash
+  adb pull /sdcard/Download/<archivo> .
+  ```
+- Reiniciar el servidor adb si hay problemas de conexión:
+  ```bash
+  adb kill-server && adb start-server
+  ```
+
+### Notas
+
+- El package name de la app es `es.benjamin.mates`.
+- El APK de debug (`pnpm android:dev`) carga el frontend desde el servidor Vite del PC por red local; al instalarlo en el móvil sin servidor corriendo verás un error de conexión. Para uso independiente usa `pnpm android:build`.
+- En Android 11+ puede ser necesario activar "Instalar apps desconocidas" para el navegador/gestor de archivos si instalas el APK manualmente sin adb.
+
 ## Configuración de API keys
 
 La app necesita varias claves según las funcionalidades que quieras usar. Ninguna es obligatoria para el funcionamiento básico con Ollama local.

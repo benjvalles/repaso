@@ -1,8 +1,22 @@
-import type { ProfileForm } from "./types"
+import type { ProfileForm, SubjectPrompts, Subject } from "./types"
+
+/** Devuelve un mapa de contextos pedagógicos vacío (uno por profesor) */
+export const emptyPrompts = (): SubjectPrompts => ({
+  mates: "", lengua_espanola: "", lengua_inglesa: "", naturales: "", personalizado: "",
+})
+
+/** Etiqueta legible de una asignatura ("profesor") */
+export const subjectLabel = (s: Subject): string => ({
+  mates: "Matemáticas",
+  lengua_espanola: "Lengua Española",
+  lengua_inglesa: "Lengua Inglesa",
+  naturales: "Naturales",
+  personalizado: "Personalizado",
+})[s]
 
 /** Devuelve un objeto ProfileForm vacío para resetear el formulario de perfiles */
 export const emptyProfileForm = (): ProfileForm => ({
-  id: null, display_name: "", school_year: 1, age: "", level_mode: "automatic", manual_level: 1, manual_prompt: "",
+  id: null, display_name: "", school_year: 1, age: "", level_mode: "automatic", manual_level: 1, manual_prompt: "", prompts: emptyPrompts(),
 })
 
 /**

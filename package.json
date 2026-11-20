@@ -17,6 +17,7 @@
     "android:build": "tauri android build --target aarch64 --apk",
     "android:build:signed": "bash -lc 'source ./android-signing.env && tauri android build --target aarch64 --apk'",
     "android:build:all": "tauri android build",
+    "android:install": "adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk",
     "proxy:dev": "pnpm --filter baserow-proxy dev",
     "proxy:deploy": "pnpm --filter baserow-proxy wrangler:deploy",
     "proxy:secrets": "pnpm --filter baserow-proxy secrets",

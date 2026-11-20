@@ -2,6 +2,7 @@
   import { onMount } from "svelte"
   import { tick } from "svelte"
   import { appState } from "../lib/app-state.svelte"
+  import { subjectLabel } from "../lib/helpers"
 
   let deletingSessionId = $state("")
 
@@ -28,7 +29,7 @@
     <div class="session-info">
       <strong>Sesión {s.id.slice(0, 8)}</strong>
       <span>{new Date(s.started_at).toLocaleString("es-ES")}</span>
-      <span>{s.questions_answered}/{s.total_questions} · {s.correct_count} correctas · {s.status}</span>
+      <span>{s.questions_answered}/{s.total_questions} · {s.correct_count} correctas · {s.status} · {subjectLabel(s.subject)}</span>
     </div>
     <button class="small danger" type="button" disabled={deletingSessionId === s.id} onclick={async (e) => {
       e.stopPropagation()
@@ -55,7 +56,7 @@
         <div class="session-info">
           <strong>Sesión {s.id.slice(0, 8)}</strong>
           <span>{new Date(s.started_at).toLocaleString("es-ES")}</span>
-          <span>{s.questions_answered}/{s.total_questions} · {s.correct_count} correctas · {s.status} — Eliminada</span>
+          <span>{s.questions_answered}/{s.total_questions} · {s.correct_count} correctas · {s.status} · {subjectLabel(s.subject)} — Eliminada</span>
         </div>
         <button class="secondary" type="button" onclick={() => appState.recoverSession(s.id)}>Recuperar</button>
       </div>

@@ -1,4 +1,5 @@
 type LevelMode = "automatic" | "manual"
+type Subject = "mates" | "lengua_espanola" | "lengua_inglesa" | "naturales" | "personalizado"
 type AppView = "loading" | "setup_pin" | "child_select" | "child_session" | "child_summary" | "child_chat" | "adult_unlock" | "adult_panel"
 
 type Profile = {
@@ -12,6 +13,8 @@ type Profile = {
   created_at: string
   updated_at: string
 }
+
+type SubjectPrompts = Record<Subject, string>
 
 type LLMConfig = {
   provider: string
@@ -79,6 +82,7 @@ type Session = {
   id: string
   profile_id: string
   status: string
+  subject: Subject
   total_questions: number
   questions_answered: number
   correct_count: number
@@ -199,6 +203,7 @@ type ProfileForm = {
   level_mode: LevelMode
   manual_level: number
   manual_prompt: string
+  prompts: SubjectPrompts
 }
 
 type CloudStatus = {
@@ -219,7 +224,7 @@ type SyncResult = {
 }
 
 export type {
-  LevelMode, AppView,
+  LevelMode, Subject, SubjectPrompts, AppView,
   Profile, LLMConfig, AppStatus,
   CurrentQuestion, StartSessionResponse, SubmitAnswerResponse, ExplanationResponse,
   SessionQuestion, Session, SessionSummary,

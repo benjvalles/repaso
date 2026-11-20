@@ -4,6 +4,8 @@ pub mod gemini;
 pub mod ollama;
 pub mod openai_compatible;
 
+use crate::models::Subject;
+
 /// Representa una pregunta generada por el LLM.
 #[derive(Debug, Clone)]
 pub struct LLMQuestion {
@@ -44,6 +46,7 @@ impl LLMProviderEnum {
     /// Genera una pregunta de matemáticas para un curso y nivel dado.
     ///
     /// # Parámetros
+    /// - `subject`: Asignatura ("profesor") que genera el ejercicio.
     /// - `year`: Curso del alumno (1-6 Primaria).
     /// - `level`: Nivel de dificultad actual del alumno.
     /// - `concept`: Concepto específico a evaluar. Si es `None`, se elige automáticamente.
@@ -51,17 +54,18 @@ impl LLMProviderEnum {
     ///
     /// # Retorna
     /// `LLMQuestion` con la pregunta, respuesta correcta, concepto y dificultad.
-    pub async fn generate_question(&self, year: u8, level: u8, concept: Option<String>, manual_prompt: Option<&str>, locale: &str) -> Result<LLMQuestion, String> {
+    pub async fn generate_question(&self, subject: Subject, year: u8, level: u8, concept: Option<String>, manual_prompt: Option<&str>, locale: &str) -> Result<LLMQuestion, String> {
         match self {
-            Self::Ollama(p) => p.generate_question(year, level, concept, manual_prompt, locale).await,
-            Self::Gemini(p) => p.generate_question(year, level, concept, manual_prompt, locale).await,
-            Self::OpenAICompatible(p) => p.generate_question(year, level, concept, manual_prompt, locale).await,
+            Self::Ollama(p) => p.generate_question(subject, year, level, concept, manual_prompt, locale).await,
+            Self::Gemini(p) => p.generate_question(subject, year, level, concept, manual_prompt, locale).await,
+            Self::OpenAICompatible(p) => p.generate_question(subject, year, level, concept, manual_prompt, locale).await,
         }
     }
 
     /// Genera una explicación motivadora cuando el estudiante falla una pregunta.
     ///
     /// # Parámetros
+    /// - `subject`: Asignatura ("profesor") que explica el error.
     /// - `question`: Pregunta que falló el alumno.
     /// - `student_answer`: Respuesta dada por el alumno.
     /// - `expected_answer`: Respuesta correcta.
@@ -72,6 +76,7 @@ impl LLMProviderEnum {
     /// `LLMExplanation` con la explicación, puntos clave y siguientes pasos.
     pub async fn provide_explanation(
         &self,
+        subject: Subject,
         question: &LLMQuestion,
         student_answer: &str,
         expected_answer: &str,
@@ -80,26 +85,27 @@ impl LLMProviderEnum {
         locale: &str,
     ) -> Result<LLMExplanation, String> {
         match self {
-            Self::Ollama(p) => p.provide_explanation(question, student_answer, expected_answer, concept, manual_prompt, locale).await,
-            Self::Gemini(p) => p.provide_explanation(question, student_answer, expected_answer, concept, manual_prompt, locale).await,
-            Self::OpenAICompatible(p) => p.provide_explanation(question, student_answer, expected_answer, concept, manual_prompt, locale).await,
+            Self::Ollama(p) => p.provide_explanation(subject, question, student_answer, expected_answer, concept, manual_prompt, locale).await,
+            Self::Gemini(p) => p.provide_explanation(subject, question, student_answer, expected_answer, concept, manual_prompt, locale).await,
+            Self::OpenAICompatible(p) => p.provide_explanation(subject, question, student_answer, expected_answer, concept, manual_prompt, locale).await,
         }
     }
 
     /// Reformula un concepto de otra manera para reforzar la comprensión.
     ///
     /// # Parámetros
+    /// - `subject`: Asignatura ("profesor") que reformula.
     /// - `concept`: Concepto matemático a reformular.
     /// - `question`: Pregunta original que causó la dificultad.
     /// - `manual_prompt`: Contexto pedagogico adicional definido por el adulto.
     ///
     /// # Retorna
     /// `String` con la explicación reformulada en lenguaje sencillo.
-    pub async fn reformulate_concept(&self, concept: &str, question: &LLMQuestion, manual_prompt: Option<&str>, locale: &str) -> Result<String, String> {
+    pub async fn reformulate_concept(&self, subject: Subject, concept: &str, question: &LLMQuestion, manual_prompt: Option<&str>, locale: &str) -> Result<String, String> {
         match self {
-            Self::Ollama(p) => p.reformulate_concept(concept, question, manual_prompt, locale).await,
-            Self::Gemini(p) => p.reformulate_concept(concept, question, manual_prompt, locale).await,
-            Self::OpenAICompatible(p) => p.reformulate_concept(concept, question, manual_prompt, locale).await,
+            Self::Ollama(p) => p.reformulate_concept(subject, concept, question, manual_prompt, locale).await,
+            Self::Gemini(p) => p.reformulate_concept(subject, concept, question, manual_prompt, locale).await,
+            Self::OpenAICompatible(p) => p.reformulate_concept(subject, concept, question, manual_prompt, locale).await,
         }
     }
 

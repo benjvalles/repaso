@@ -1,8 +1,10 @@
 use super::baserow::BaserowClient;
+use crate::models::Subject;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// Resultados de la sincronización. Contiene contadores por cada tabla y los errores encontrados.
@@ -16,7 +18,12 @@ pub struct SyncResult {
 }
 
 const FIELD_PROFILES_DELETED_AT: &str = "field_9679183";
+/// Campo `profile_prompts` (JSON de contextos por asignatura) de la tabla user_profiles en Baserow.
+const FIELD_PROFILES_PROMPTS: &str = "field_12324504";
 const FIELD_SESSIONS_DELETED_AT: &str = "field_9679269";
+/// Campo `subject` (asignatura) de la tabla user_sessions en Baserow.
+/// TODO: actualizar con el id real tras crear el campo en Baserow.
+const FIELD_SESSIONS_SUBJECT: &str = "field_PENDIENTE_SESSION_SUBJECT";
 const FIELD_QUESTIONS_DELETED_AT: &str = "field_9679279";
 const FIELD_SESSIONS_UPDATED_AT: &str = "field_9679263";
 const FIELD_QUESTIONS_UPDATED_AT: &str = "field_9679275";
@@ -256,7 +263,26 @@ async fn sync_config_table(
 /// Lee todos los perfiles desde SQLite local.
 fn read_local_profiles(
     db: &Connection,
-) -> Result<Vec<(String, String, u8, Option<u8>, String, u8, Option<String>, String, String, Option<String>)>, String> {
+) -> Result<Vec<(String, String, u8, Option<u8>, String, u8, Option<String>, String, String, Option<String>, String)>, String> {
+    let mut prompts_by_profile: HashMap<String, HashMap<String, String>> = HashMap::new();
+    {
+        let mut stmt = db
+            .prepare("SELECT profile_id, subject, prompt FROM profile_prompts")
+            .map_err(|e| format!("Error leyendo contextos locales: {e}"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| format!("Error leyendo contextos locales: {e}"))?;
+        for (profile_id, subject, prompt) in rows.flatten() {
+            prompts_by_profile.entry(profile_id).or_default().insert(subject, prompt);
+        }
+    }
+
     let mut stmt = db
         .prepare(
             "SELECT id, display_name, school_year, age, level_mode,
@@ -264,7 +290,7 @@ fn read_local_profiles(
              FROM profiles ORDER BY id",
         )
         .map_err(|e| format!("Error leyendo perfiles locales: {e}"))?;
-    let rows = stmt
+    let rows: Vec<(String, String, u8, Option<u8>, String, u8, Option<String>, String, String, Option<String>)> = stmt
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -283,6 +309,17 @@ fn read_local_profiles(
         .filter_map(|r| r.ok())
         .filter(|(id, _, _, _, _, _, _, _, _, _)| !id.is_empty())
         .collect();
+
+    let rows = rows
+        .into_iter()
+        .map(|(id, display_name, school_year, age, level_mode, current_level, manual_prompt, created_at, updated_at, deleted_at)| {
+            let prompts_json = prompts_by_profile
+                .get(&id)
+                .and_then(|prompts| serde_json::to_string(prompts).ok())
+                .unwrap_or_else(|| "{}".to_string());
+            (id, display_name, school_year, age, level_mode, current_level, manual_prompt, created_at, updated_at, deleted_at, prompts_json)
+        })
+        .collect();
     Ok(rows)
 }
 
@@ -295,7 +332,7 @@ fn read_local_profiles(
 fn write_remote_profiles(
     db: &Connection,
     remote_rows: &[Value],
-    local_rows: &[(String, String, u8, Option<u8>, String, u8, Option<String>, String, String, Option<String>)],
+    local_rows: &[(String, String, u8, Option<u8>, String, u8, Option<String>, String, String, Option<String>, String)],
 ) -> Result<u32, String> {
     let mut synced = 0u32;
     for rem in remote_rows {
@@ -309,11 +346,12 @@ fn write_remote_profiles(
         let rem_lm = rem["field_9480712"].as_str().unwrap_or("automatic");
         let rem_curr = value_to_i64(&rem["field_9480713"]).unwrap_or(1) as u8;
         let rem_manual = rem["field_9480714"].as_str().map(String::from);
+        let rem_prompts = rem[FIELD_PROFILES_PROMPTS].as_str().unwrap_or("{}");
         let rem_cr = rem["field_9480715"].as_str().unwrap_or("");
 
         let local = local_rows
             .iter()
-            .find(|(id, _, _, _, _, _, _, _, _, _)| id == rem_profile_id);
+            .find(|(id, _, _, _, _, _, _, _, _, _, _)| id == rem_profile_id);
 
         match (local, rem_deleted.is_empty()) {
             // No existe local, no esta borrado remoto -> insertar
@@ -329,6 +367,7 @@ fn write_remote_profiles(
                     ],
                 )
                 .map_err(|e| format!("Error insertando perfil remoto: {e}"))?;
+                write_profile_prompts(db, rem_profile_id, rem_prompts)?;
                 synced += 1;
             }
             // No existe local, esta borrado remoto -> insertar marcado como borrado:
@@ -345,6 +384,7 @@ fn write_remote_profiles(
                     ],
                 )
                 .map_err(|e| format!("Error insertando perfil remoto borrado: {e}"))?;
+                write_profile_prompts(db, rem_profile_id, rem_prompts)?;
                 synced += 1;
             }
             // Existe local, esta borrado remoto -> si la eliminacion remota es mas reciente, borrar local
@@ -374,6 +414,7 @@ fn write_remote_profiles(
                         ],
                     )
                     .map_err(|e| format!("Error actualizando perfil desde remoto: {e}"))?;
+                    write_profile_prompts(db, rem_profile_id, rem_prompts)?;
                     synced += 1;
                 }
             }
@@ -382,16 +423,52 @@ fn write_remote_profiles(
     Ok(synced)
 }
 
+/// Sustituye los contextos pedagogicos locales de un perfil desde el JSON remoto.
+///
+/// # Argumentos
+///
+/// * `db` - Conexion a la base de datos SQLite.
+/// * `profile_id` - Identificador del perfil.
+/// * `raw` - JSON con clave = subject y valor = prompt.
+///
+/// # Retorna
+///
+/// * `Ok(())` si se aplicaron correctamente.
+/// * `Err(String)` si fallo la escritura.
+fn write_profile_prompts(db: &Connection, profile_id: &str, raw: &str) -> Result<(), String> {
+    let raw = raw.trim();
+    // Un remoto sin contextos (build antigua o campo vacio) no debe borrar los locales.
+    if raw.is_empty() || raw == "{}" {
+        return Ok(());
+    }
+    let prompts: HashMap<String, String> = serde_json::from_str(raw).unwrap_or_default();
+    if prompts.is_empty() {
+        return Ok(());
+    }
+    db.execute("DELETE FROM profile_prompts WHERE profile_id = ?1", params![profile_id])
+        .map_err(|e| format!("Error limpiando contextos remotos: {e}"))?;
+    let now = now_rfc3339();
+    for (subject, prompt) in prompts {
+        let prompt = prompt.trim();
+        if prompt.is_empty() { continue; }
+        db.execute(
+            "INSERT OR IGNORE INTO profile_prompts (profile_id, subject, prompt, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![profile_id, subject, prompt, now],
+        ).map_err(|e| format!("Error guardando contexto remoto: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Sube perfiles locales a Baserow (actualiza si la version local es mas reciente).
 /// Incluye el estado `deleted_at` para propagar eliminaciones a la nube.
 async fn upload_local_profiles(
     client: &BaserowClient,
-    local_rows: &[(String, String, u8, Option<u8>, String, u8, Option<String>, String, String, Option<String>)],
+    local_rows: &[(String, String, u8, Option<u8>, String, u8, Option<String>, String, String, Option<String>, String)],
     remote_rows: &[Value],
     user_id: &str,
 ) -> Result<u32, String> {
     let mut synced = 0u32;
-    for (id, display_name, school_year, age, level_mode, current_level, manual_prompt, created_at, updated_at, deleted_at) in local_rows
+    for (id, display_name, school_year, age, level_mode, current_level, manual_prompt, created_at, updated_at, deleted_at, prompts_json) in local_rows
     {
         let remote = remote_rows
             .iter()
@@ -420,6 +497,7 @@ async fn upload_local_profiles(
                                 "field_9480714": manual_prompt,
                                 "field_9480715": created_at,
                                 "field_9480716": now,
+                                FIELD_PROFILES_PROMPTS: prompts_json,
                                 FIELD_PROFILES_DELETED_AT: deleted_field,
                             }),
                         )
@@ -442,6 +520,7 @@ async fn upload_local_profiles(
                             "field_9480714": manual_prompt,
                             "field_9480715": created_at,
                             "field_9480716": now,
+                            FIELD_PROFILES_PROMPTS: prompts_json,
                             FIELD_PROFILES_DELETED_AT: deleted_field,
                         }),
                     )
@@ -508,7 +587,7 @@ async fn sync_profiles_table(
 /// * started_at: String, fecha/hora de inicio en formato ISO
 /// * ended_at: Option<String>, fecha/hora de finalización opcional en formato ISO
 ///
-type LocalSessionRow = (String, String, String, i64, i64, i64, i64, String, Option<String>, String, Option<String>);
+type LocalSessionRow = (String, String, String, String, i64, i64, i64, i64, String, Option<String>, String, Option<String>);
 
 /// Lee todas las sesiones desde la base de datos local
 ///
@@ -518,7 +597,7 @@ type LocalSessionRow = (String, String, String, i64, i64, i64, i64, String, Opti
 /// # Proceso
 /// 1. Prepara una sentencia SQL para seleccionar todos los campos de la tabla sessions
 /// 2. Ejecuta la consulta y mapea cada fila a una tupla LocalSessionRow
-///    (id, profile_id, status, total_questions, questions_answered, correct_count,
+///    (id, profile_id, status, subject, total_questions, questions_answered, correct_count,
 ///     current_question_index, started_at, ended_at, updated_at, deleted_at)
 /// 3. Filtra las filas donde el ID está vacío
 ///
@@ -528,7 +607,7 @@ type LocalSessionRow = (String, String, String, i64, i64, i64, i64, String, Opti
 fn read_local_sessions(db: &Connection) -> Result<Vec<LocalSessionRow>, String> {
     let mut stmt = db
         .prepare(
-            "SELECT id, profile_id, status, total_questions, questions_answered,
+            "SELECT id, profile_id, status, subject, total_questions, questions_answered,
                     correct_count, current_question_index, started_at, ended_at,
                     updated_at, deleted_at
              FROM sessions ORDER BY id",
@@ -540,19 +619,20 @@ fn read_local_sessions(db: &Connection) -> Result<Vec<LocalSessionRow>, String> 
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
+                row.get::<_, String>(3)?,
                 row.get::<_, i64>(4)?,
                 row.get::<_, i64>(5)?,
                 row.get::<_, i64>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, Option<String>>(8)?,
-                row.get::<_, String>(9)?,
-                row.get::<_, Option<String>>(10)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, Option<String>>(11)?,
             ))
         })
         .map_err(|e| format!("Error leyendo sesiones locales: {e}"))?
         .filter_map(|r| r.ok())
-        .filter(|(id, _, _, _, _, _, _, _, _, _, _)| !id.is_empty())
+        .filter(|(id, _, _, _, _, _, _, _, _, _, _, _)| !id.is_empty())
         .collect();
     Ok(rows)
 }
@@ -579,7 +659,7 @@ async fn upload_local_sessions(
     user_id: &str,
 ) -> Result<u32, String> {
     let mut synced = 0u32;
-    for (id, profile_id, status, total_q, answered, correct, idx, started, ended, updated_at, deleted_at) in local_rows {
+    for (id, profile_id, status, subject, total_q, answered, correct, idx, started, ended, updated_at, deleted_at) in local_rows {
         let remote = remote_rows
             .iter()
             .find(|r| r["field_9480695"].as_str() == Some(id.as_str()));
@@ -602,6 +682,7 @@ async fn upload_local_sessions(
                                 "field_9480717": user_id,
                                 "field_9480718": profile_id,
                                 "field_9480719": status,
+                                FIELD_SESSIONS_SUBJECT: subject,
                                 "field_9480720": total_q,
                                 "field_9480721": answered,
                                 "field_9480722": correct,
@@ -626,6 +707,7 @@ async fn upload_local_sessions(
                             "field_9480717": user_id,
                             "field_9480718": profile_id,
                             "field_9480719": status,
+                            FIELD_SESSIONS_SUBJECT: subject,
                             "field_9480720": total_q,
                             "field_9480721": answered,
                             "field_9480722": correct,
@@ -649,6 +731,7 @@ async fn upload_local_sessions(
                             "field_9480717": user_id,
                             "field_9480718": profile_id,
                             "field_9480719": status,
+                            FIELD_SESSIONS_SUBJECT: subject,
                             "field_9480720": total_q,
                             "field_9480721": answered,
                             "field_9480722": correct,
@@ -674,6 +757,7 @@ async fn upload_local_sessions(
                                 "field_9480717": user_id,
                                 "field_9480718": profile_id,
                                 "field_9480719": status,
+                                FIELD_SESSIONS_SUBJECT: subject,
                                 "field_9480720": total_q,
                                 "field_9480721": answered,
                                 "field_9480722": correct,
@@ -714,7 +798,7 @@ fn write_remote_sessions(
 
         let local = local_rows
             .iter()
-            .find(|(id, _, _, _, _, _, _, _, _, _, _)| id == rem_session_id);
+            .find(|(id, _, _, _, _, _, _, _, _, _, _, _)| id == rem_session_id);
 
         match (local, rem_deleted.is_empty()) {
             // No existe local, no esta borrada remoto -> insertar con updated_at
@@ -726,6 +810,9 @@ fn write_remote_sessions(
                     continue;
                 }
                 let rem_status = rem["field_9480719"].as_str().unwrap_or("active");
+                let rem_subject = Subject::from_db(rem[FIELD_SESSIONS_SUBJECT].as_str().unwrap_or("mates").to_string())
+                    .unwrap_or(Subject::Mates)
+                    .as_str();
                 let rem_total = value_to_i64(&rem["field_9480720"]).unwrap_or(10);
                 let rem_answered = value_to_i64(&rem["field_9480721"]).unwrap_or(0);
                 let rem_correct = value_to_i64(&rem["field_9480722"]).unwrap_or(0);
@@ -735,11 +822,11 @@ fn write_remote_sessions(
 
                 db.execute(
                     "INSERT OR IGNORE INTO sessions
-                     (id, profile_id, status, total_questions, questions_answered,
+                     (id, profile_id, status, subject, total_questions, questions_answered,
                       correct_count, current_question_index, started_at, ended_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                     params![
-                        rem_session_id, rem_profile_id, rem_status, rem_total,
+                        rem_session_id, rem_profile_id, rem_status, rem_subject, rem_total,
                         rem_answered, rem_correct, rem_idx, rem_started, rem_ended, rem_updated,
                     ],
                 )
@@ -750,7 +837,7 @@ fn write_remote_sessions(
             (None, false) => {}
             // Existe local, esta borrada remoto -> si la eliminacion remota es mas reciente, borrar local
             (Some(local), false) => {
-                let local_updated = &local.9;
+                let local_updated = &local.10;
                 if rem_updated > local_updated.as_str() {
                     db.execute(
                         "UPDATE sessions SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
@@ -762,7 +849,7 @@ fn write_remote_sessions(
             }
             // Existe local, no esta borrada remoto -> ganar si remoto es mas reciente (incondicional)
             (Some(local), true) => {
-                let local_updated = &local.9;
+                let local_updated = &local.10;
                 if rem_updated > local_updated.as_str() {
                     let rem_profile_id = rem["field_9480718"].as_str().unwrap_or("");
                     if rem_profile_id.is_empty() || !row_exists(db, "profiles", rem_profile_id)? {
@@ -770,6 +857,9 @@ fn write_remote_sessions(
                         continue;
                     }
                     let rem_status = rem["field_9480719"].as_str().unwrap_or("active");
+                    let rem_subject = Subject::from_db(rem[FIELD_SESSIONS_SUBJECT].as_str().unwrap_or("mates").to_string())
+                        .unwrap_or(Subject::Mates)
+                        .as_str();
                     let rem_total = value_to_i64(&rem["field_9480720"]).unwrap_or(10);
                     let rem_answered = value_to_i64(&rem["field_9480721"]).unwrap_or(0);
                     let rem_correct = value_to_i64(&rem["field_9480722"]).unwrap_or(0);
@@ -777,12 +867,12 @@ fn write_remote_sessions(
                     let rem_started = rem["field_9480724"].as_str().unwrap_or("");
                     let rem_ended = rem["field_9480725"].as_str().map(String::from);
                     db.execute(
-                        "UPDATE sessions SET profile_id = ?1, status = ?2, total_questions = ?3,
-                         questions_answered = ?4, correct_count = ?5, current_question_index = ?6,
-                         started_at = ?7, ended_at = ?8, updated_at = ?9, deleted_at = NULL
-                         WHERE id = ?10",
+                        "UPDATE sessions SET profile_id = ?1, status = ?2, subject = ?3, total_questions = ?4,
+                         questions_answered = ?5, correct_count = ?6, current_question_index = ?7,
+                         started_at = ?8, ended_at = ?9, updated_at = ?10, deleted_at = NULL
+                         WHERE id = ?11",
                         params![
-                            rem_profile_id, rem_status, rem_total, rem_answered, rem_correct,
+                            rem_profile_id, rem_status, rem_subject, rem_total, rem_answered, rem_correct,
                             rem_idx, rem_started, rem_ended, rem_updated, rem_session_id,
                         ],
                     )
@@ -1359,12 +1449,12 @@ async fn upload_new_local_config(
 /// Sube perfiles locales que no existen en remoto (solo create).
 async fn upload_new_local_profiles(
     client: &BaserowClient,
-    local_rows: &[(String, String, u8, Option<u8>, String, u8, Option<String>, String, String, Option<String>)],
+    local_rows: &[(String, String, u8, Option<u8>, String, u8, Option<String>, String, String, Option<String>, String)],
     remote_rows: &[Value],
     user_id: &str,
 ) -> Result<u32, String> {
     let mut synced = 0u32;
-    for (id, display_name, school_year, age, level_mode, current_level, manual_prompt, created_at, _updated_at, deleted_at) in local_rows
+    for (id, display_name, school_year, age, level_mode, current_level, manual_prompt, created_at, _updated_at, deleted_at, prompts_json) in local_rows
     {
         let exists = remote_rows
             .iter()
@@ -1389,6 +1479,7 @@ async fn upload_new_local_profiles(
                         "field_9480714": manual_prompt,
                         "field_9480715": created_at,
                         "field_9480716": now,
+                        FIELD_PROFILES_PROMPTS: prompts_json,
                         FIELD_PROFILES_DELETED_AT: deleted_field,
                     }),
                 )
@@ -1407,7 +1498,7 @@ async fn upload_new_local_sessions(
     user_id: &str,
 ) -> Result<u32, String> {
     let mut synced = 0u32;
-    for (id, profile_id, status, total_q, answered, correct, idx, started, ended, _, deleted_at) in local_rows {
+    for (id, profile_id, status, subject, total_q, answered, correct, idx, started, ended, _, deleted_at) in local_rows {
         let exists = remote_rows
             .iter()
             .any(|r| r["field_9480695"].as_str() == Some(id.as_str()));
@@ -1425,6 +1516,7 @@ async fn upload_new_local_sessions(
                         "field_9480717": user_id,
                         "field_9480718": profile_id,
                         "field_9480719": status,
+                        FIELD_SESSIONS_SUBJECT: subject,
                         "field_9480720": total_q,
                         "field_9480721": answered,
                         "field_9480722": correct,
@@ -1519,7 +1611,7 @@ fn force_write_remote_config(
 fn force_write_remote_profiles(
     db: &Connection,
     remote_rows: &[Value],
-    local_rows: &[(String, String, u8, Option<u8>, String, u8, Option<String>, String, String, Option<String>)],
+    local_rows: &[(String, String, u8, Option<u8>, String, u8, Option<String>, String, String, Option<String>, String)],
 ) -> Result<u32, String> {
     let mut synced = 0u32;
     for rem in remote_rows {
@@ -1533,11 +1625,12 @@ fn force_write_remote_profiles(
         let rem_lm = rem["field_9480712"].as_str().unwrap_or("automatic");
         let rem_curr = value_to_i64(&rem["field_9480713"]).unwrap_or(1) as u8;
         let rem_manual = rem["field_9480714"].as_str().map(String::from);
+        let rem_prompts = rem[FIELD_PROFILES_PROMPTS].as_str().unwrap_or("{}");
         let rem_cr = rem["field_9480715"].as_str().unwrap_or("");
 
         let local = local_rows
             .iter()
-            .find(|(id, _, _, _, _, _, _, _, _, _)| id == rem_profile_id);
+            .find(|(id, _, _, _, _, _, _, _, _, _, _)| id == rem_profile_id);
 
         // Si remoto esta borrado pero local se recupero mas tarde, preservar recuperacion
         if !rem_deleted.is_empty() {
@@ -1584,6 +1677,7 @@ fn force_write_remote_profiles(
                 ],
             )
             .map_err(|e| format!("Error sobrescribiendo perfil desde remoto: {e}"))?;
+            write_profile_prompts(db, rem_profile_id, rem_prompts)?;
             synced += 1;
         }
     }
@@ -1607,8 +1701,8 @@ fn force_write_remote_sessions(
 
         if !rem_deleted.is_empty() {
             // Preservar recuperacion local mas reciente
-            if let Some(local) = local_rows.iter().find(|(id, _, _, _, _, _, _, _, _, _, _)| id == rem_session_id) {
-                if local.9.as_str() > rem_deleted {
+            if let Some(local) = local_rows.iter().find(|(id, _, _, _, _, _, _, _, _, _, _, _)| id == rem_session_id) {
+                if local.10.as_str() > rem_deleted {
                     continue
                 }
             }
@@ -1625,6 +1719,9 @@ fn force_write_remote_sessions(
                 continue;
             }
             let rem_status = rem["field_9480719"].as_str().unwrap_or("active");
+            let rem_subject = Subject::from_db(rem[FIELD_SESSIONS_SUBJECT].as_str().unwrap_or("mates").to_string())
+                .unwrap_or(Subject::Mates)
+                .as_str();
             let rem_total = value_to_i64(&rem["field_9480720"]).unwrap_or(10);
             let rem_answered = value_to_i64(&rem["field_9480721"]).unwrap_or(0);
             let rem_correct = value_to_i64(&rem["field_9480722"]).unwrap_or(0);
@@ -1632,12 +1729,13 @@ fn force_write_remote_sessions(
             let rem_started = rem["field_9480724"].as_str().unwrap_or("");
             let rem_ended = rem["field_9480725"].as_str().map(String::from);
             db.execute(
-                "INSERT INTO sessions (id, profile_id, status, total_questions,
+                "INSERT INTO sessions (id, profile_id, status, subject, total_questions,
                  questions_answered, correct_count, current_question_index,
                  started_at, ended_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(id) DO UPDATE SET
                  profile_id = excluded.profile_id, status = excluded.status,
+                 subject = excluded.subject,
                  total_questions = excluded.total_questions,
                  questions_answered = excluded.questions_answered,
                  correct_count = excluded.correct_count,
@@ -1645,7 +1743,7 @@ fn force_write_remote_sessions(
                  started_at = excluded.started_at, ended_at = excluded.ended_at,
                  updated_at = excluded.updated_at, deleted_at = NULL",
                 params![
-                    rem_session_id, rem_profile_id, rem_status, rem_total,
+                    rem_session_id, rem_profile_id, rem_status, rem_subject, rem_total,
                     rem_answered, rem_correct, rem_idx, rem_started, rem_ended, rem_updated,
                 ],
             )

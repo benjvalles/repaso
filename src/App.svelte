@@ -72,10 +72,12 @@
       <ChildSelectView
         profiles={appState.status?.profiles ?? []}
         selectedProfileId={appState.selectedProfileId}
+        selectedSubject={appState.selectedSubject}
         {courseLabel}
         onSelectProfile={(id: string) => appState.selectProfile(id)}
+        onSelectSubject={(subject) => appState.selectedSubject = subject}
         onStartChat={() => { appState.startChat(); appState.view = "child_chat" }}
-        onStartSession={(id: string) => appState.startSession(id)}
+        onStartSession={(id: string, subject) => appState.startSession(id, subject)}
       />
 
     {:else if appState.view === "child_session" && appState.currentQuestion}

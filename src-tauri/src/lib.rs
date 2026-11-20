@@ -6,6 +6,7 @@ mod models;
 
 use std::fs;
 use std::sync::Mutex;
+use std::collections::HashMap;
 
 use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
@@ -182,6 +183,20 @@ fn list_profiles(state: State<'_, AppState>) -> Result<Vec<Profile>, String> {
 }
 
 #[tauri::command]
+/// Devuelve los contextos pedagogicos de un perfil, indexados por asignatura.
+///
+/// # Parámetros
+/// - `profile_id`: ID del perfil.
+/// - `state`: Contexto de estado compartido `AppState`.
+///
+/// # Retorna
+/// Mapa con clave = subject y valor = prompt.
+fn get_profile_prompts(profile_id: String, state: State<'_, AppState>) -> Result<HashMap<String, String>, String> {
+    let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
+    Ok(load_profile_prompts(&db, &profile_id))
+}
+
+#[tauri::command]
 /// Crea un nuevo perfil de alumno.
 ///
 /// # Parámetros
@@ -204,6 +219,7 @@ fn create_profile(request: CreateProfileRequest, state: State<'_, AppState>) -> 
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![id, display_name, request.school_year, request.age, request.level_mode.as_str(), current_level, manual_prompt, now, now],
     ).map_err(|err| format!("No se pudo crear el perfil: {err}"))?;
+    save_profile_prompts(&db, &id, &request.prompts)?;
     get_profile_by_id(&db, &id)
 }
 
@@ -230,6 +246,7 @@ fn update_profile(request: UpdateProfileRequest, state: State<'_, AppState>) -> 
         "UPDATE profiles SET display_name = ?1, school_year = ?2, age = ?3, level_mode = ?4, current_level = ?5, manual_prompt = ?6, updated_at = ?7 WHERE id = ?8",
         params![display_name, request.school_year, request.age, request.level_mode.as_str(), current_level, manual_prompt, now, request.id],
     ).map_err(|err| format!("No se pudo actualizar el perfil: {err}"))?;
+    save_profile_prompts(&db, &request.id, &request.prompts)?;
     get_profile_by_id(&db, &request.id)
 }
 
@@ -433,7 +450,7 @@ fn test_llm_connection(request: LLMConfigRequest, state: State<'_, AppState>) ->
     let locale = state.locale.lock().map_err(|_| "No se pudo acceder al locale")?.clone();
 
     let rt = tokio::runtime::Runtime::new().map_err(|err| format!("No se pudo crear runtime: {err}"))?;
-    rt.block_on(provider.generate_question(1, 1, Some("suma basica".to_string()), None, &locale))
+    rt.block_on(provider.generate_question(Subject::Mates, 1, 1, Some("suma basica".to_string()), None, &locale))
         .map(|q| format!("Conexion OK. Pregunta: {}", q.question))
         .map_err(|err| format!("Error: {err}"))
 }
@@ -451,39 +468,33 @@ fn test_llm_connection(request: LLMConfigRequest, state: State<'_, AppState>) ->
 /// # Retorna
 /// Respuesta del asistente (`ChatMessageResponse`).
 async fn chat_message(request: ChatMessageRequest, state: State<'_, AppState>) -> Result<ChatMessageResponse, String> {
-    let (profile, provider, locale) = {
+    let (profile, manual_prompt, provider, locale) = {
         let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
         let profile = get_profile_by_id(&db, &request.profile_id)?;
+        let manual_prompt = prompt_for_profile(&db, &profile.id, request.subject);
         let provider_guard = state.llm_provider.lock().map_err(|_| "No se pudo acceder al proveedor LLM")?;
         let provider = provider_guard.as_ref()
             .ok_or("No hay proveedor LLM configurado")?
             .clone();
         let locale = state.locale.lock().map_err(|_| "No se pudo acceder al locale")?.clone();
-        (profile, provider, locale)
+        (profile, manual_prompt, provider, locale)
     };
 
-    let language = match &locale[..2] {
-        "es" => "espanol",
-        "ca" => "catalan",
-        "eu" => "euskera",
-        "gl" => "gallego",
-        "en" => "ingles",
-        _ => "espanol",
-    };
+    let language = llm::common::subject_language(request.subject, &locale);
+    let role = llm::common::subject_chat_role(request.subject);
+    let topic = llm::common::subject_chat_topic(request.subject);
 
     let age_text = profile.age.map(|a| format!("Edad del nino: {a} anios. ")).unwrap_or_default();
     let year_text = format!("Curso: {}o de primaria. ", profile.school_year);
 
-    let manual_context = profile.manual_prompt.as_deref()
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
+    let manual_context = manual_prompt.as_deref()
         .map(|p| format!("\nContexto pedagogico adicional del perfil:\n{p}"))
         .unwrap_or_default();
 
     let system_prompt = format!(
-        "Eres un companion de aprendizaje para ninos. Hablas de forma amigable y sencilla. \
+        "{role} Hablas de forma amigable y sencilla. \
          {age_text}{year_text}\
-         Puedes hablar de matematicas, curiosidades, juegos, y ayudar con dudas. \
+         Puedes hablar de {topic}, curiosidades, juegos, y ayudar con dudas. \
          NO hables de temas inapropiados para ninos. \
          Responde siempre en {language}. Sé breve y motivador.{manual_context}"
     );
@@ -506,25 +517,26 @@ async fn chat_message(request: ChatMessageRequest, state: State<'_, AppState>) -
 ///
 /// # Parámetros
 /// - `profile_id`: ID del perfil de alumno.
+/// - `subject`: Asignatura ("profesor") con la que se practica.
 /// - `state`: Contexto de estado compartido `AppState`.
 ///
 /// # Retorna
 /// Información de la sesión recién creada y la primera pregunta.
-async fn start_session(profile_id: String, state: State<'_, AppState>) -> Result<StartSessionResponse, String> {
+async fn start_session(profile_id: String, subject: Subject, state: State<'_, AppState>) -> Result<StartSessionResponse, String> {
     let (profile, session_id) = {
         let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
         let profile = get_profile_by_id(&db, &profile_id)?;
         let session_id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         db.execute(
-            "INSERT INTO sessions (id, profile_id, status, total_questions, questions_answered, correct_count, current_question_index, started_at)
-             VALUES (?1, ?2, 'active', 10, 0, 0, 0, ?3)",
-            params![session_id, profile_id, now],
+            "INSERT INTO sessions (id, profile_id, status, subject, total_questions, questions_answered, correct_count, current_question_index, started_at)
+             VALUES (?1, ?2, 'active', ?3, 10, 0, 0, 0, ?4)",
+            params![session_id, profile_id, subject.as_str(), now],
         ).map_err(|err| format!("No se pudo crear la sesión: {err}"))?;
         (profile, session_id)
     };
 
-    let first_question = generate_question_for_session(&state, &session_id, &profile).await?;
+    let first_question = generate_question_for_session(&state, &session_id, &profile, subject).await?;
 
     Ok(StartSessionResponse {
         session_id,
@@ -549,14 +561,14 @@ async fn generate_question(request: GetQuestionRequest, state: State<'_, AppStat
         let session_id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         db.execute(
-            "INSERT INTO sessions (id, profile_id, status, total_questions, questions_answered, correct_count, current_question_index, started_at)
-             VALUES (?1, ?2, 'active', 10, 0, 0, 0, ?3)",
-            params![session_id, request.profile_id, now],
+            "INSERT INTO sessions (id, profile_id, status, subject, total_questions, questions_answered, correct_count, current_question_index, started_at)
+             VALUES (?1, ?2, 'active', ?3, 10, 0, 0, 0, ?4)",
+            params![session_id, request.profile_id, request.subject.as_str(), now],
         ).map_err(|err| format!("No se pudo crear sesión temporal: {err}"))?;
         (profile, session_id)
     };
 
-    generate_question_for_session(&state, &session_id, &profile).await
+    generate_question_for_session(&state, &session_id, &profile, request.subject).await
 }
 
 #[tauri::command]
@@ -569,7 +581,7 @@ async fn generate_question(request: GetQuestionRequest, state: State<'_, AppStat
 /// # Retorna
 /// Resultado de la evaluacion y siguiente paso de la sesion.
 async fn submit_answer(request: SubmitAnswerRequest, state: State<'_, AppState>) -> Result<SubmitAnswerResponse, String> {
-    let (is_correct, feedback, correct_answer, finished, profile) = {
+    let (is_correct, feedback, correct_answer, finished, profile, subject) = {
         let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
         let question = get_question_by_id(&db, &request.question_id)?;
 
@@ -599,12 +611,12 @@ async fn submit_answer(request: SubmitAnswerRequest, state: State<'_, AppState>)
             None
         };
 
-        (is_correct, feedback, question.correct_answer, finished, profile)
+        (is_correct, feedback, question.correct_answer, finished, profile, session.subject)
     };
 
     let next_question = if !finished {
         let profile = profile.unwrap();
-        Some(generate_question_for_session(&state, &request.session_id, &profile).await?)
+        Some(generate_question_for_session(&state, &request.session_id, &profile, subject).await?)
     } else {
         None
     };
@@ -629,19 +641,20 @@ async fn submit_answer(request: SubmitAnswerRequest, state: State<'_, AppState>)
 /// # Retorna
 /// Explicacion, puntos clave, pasos siguientes y pregunta reformulada (opcional).
 async fn get_explanation(question_id: String, state: State<'_, AppState>) -> Result<ExplanationResponse, String> {
-    let (question, manual_prompt, locale, provider) = {
+    let (question, manual_prompt, subject, locale, provider) = {
         let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
         let question = get_question_by_id(&db, &question_id)?;
         let session = get_session_by_id(&db, &question.session_id)?;
         let profile = get_profile_by_id(&db, &session.profile_id)?;
-        let manual_prompt = manual_prompt_for_profile(&profile);
+        let subject = session.subject;
+        let manual_prompt = prompt_for_profile(&db, &profile.id, subject);
         let locale = state.locale.lock()
             .map_err(|_| "No se pudo acceder al locale")?
             .clone();
         let provider = state.llm_provider.lock()
             .map_err(|_| "No se pudo acceder al proveedor LLM")?
             .clone();
-        (question, manual_prompt, locale, provider)
+        (question, manual_prompt, subject, locale, provider)
     };
 
     let llm_question = LLMQuestion {
@@ -653,6 +666,7 @@ async fn get_explanation(question_id: String, state: State<'_, AppState>) -> Res
 
     let explanation = match provider.as_ref() {
         Some(provider) => match provider.provide_explanation(
+            subject,
             &llm_question,
             question.student_answer.as_deref().unwrap_or(""),
             &question.correct_answer,
@@ -676,7 +690,7 @@ async fn get_explanation(question_id: String, state: State<'_, AppState>) -> Res
 
     let reformulated = match provider.as_ref() {
         Some(provider) => provider
-            .reformulate_concept(&question.concept, &llm_question, manual_prompt.as_deref(), &locale)
+            .reformulate_concept(subject, &question.concept, &llm_question, manual_prompt.as_deref(), &locale)
             .await
             .ok(),
         None => None,
@@ -1008,21 +1022,23 @@ fn get_session_summary(session_id: String, state: State<'_, AppState>) -> Result
 fn list_sessions(profile_id: String, state: State<'_, AppState>) -> Result<Vec<Session>, String> {
     let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
     let mut stmt = db.prepare(
-         "SELECT id, profile_id, status, total_questions, questions_answered, correct_count, current_question_index, started_at, ended_at
+         "SELECT id, profile_id, status, subject, total_questions, questions_answered, correct_count, current_question_index, started_at, ended_at
           FROM sessions WHERE profile_id = ?1 AND deleted_at IS NULL ORDER BY started_at DESC",
     ).map_err(|err| format!("No se pudieron preparar las sesiones: {err}"))?;
 
     let rows = stmt.query_map(params![profile_id], |row| {
+        let subject: String = row.get(3)?;
         Ok(Session {
             id: row.get(0)?,
             profile_id: row.get(1)?,
             status: row.get(2)?,
-            total_questions: row.get(3)?,
-            questions_answered: row.get(4)?,
-            correct_count: row.get(5)?,
-            current_question_index: row.get(6)?,
-            started_at: row.get(7)?,
-            ended_at: row.get(8)?,
+            subject: Subject::from_db(subject).unwrap_or(Subject::Mates),
+            total_questions: row.get(4)?,
+            questions_answered: row.get(5)?,
+            correct_count: row.get(6)?,
+            current_question_index: row.get(7)?,
+            started_at: row.get(8)?,
+            ended_at: row.get(9)?,
         })
     }).map_err(|err| format!("No se pudieron leer las sesiones: {err}"))?;
 
@@ -1043,21 +1059,23 @@ fn list_sessions(profile_id: String, state: State<'_, AppState>) -> Result<Vec<S
 fn list_deleted_sessions(profile_id: String, state: State<'_, AppState>) -> Result<Vec<Session>, String> {
     let db = state.db.lock().map_err(|_| "No se pudo acceder a la base de datos")?;
     let mut stmt = db.prepare(
-        "SELECT id, profile_id, status, total_questions, questions_answered, correct_count, current_question_index, started_at, ended_at
+        "SELECT id, profile_id, status, subject, total_questions, questions_answered, correct_count, current_question_index, started_at, ended_at
          FROM sessions WHERE profile_id = ?1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC",
     ).map_err(|err| format!("No se pudieron preparar las sesiones eliminadas: {err}"))?;
 
     let rows = stmt.query_map(params![profile_id], |row| {
+        let subject: String = row.get(3)?;
         Ok(Session {
             id: row.get(0)?,
             profile_id: row.get(1)?,
             status: row.get(2)?,
-            total_questions: row.get(3)?,
-            questions_answered: row.get(4)?,
-            correct_count: row.get(5)?,
-            current_question_index: row.get(6)?,
-            started_at: row.get(7)?,
-            ended_at: row.get(8)?,
+            subject: Subject::from_db(subject).unwrap_or(Subject::Mates),
+            total_questions: row.get(4)?,
+            questions_answered: row.get(5)?,
+            correct_count: row.get(6)?,
+            current_question_index: row.get(7)?,
+            started_at: row.get(8)?,
+            ended_at: row.get(9)?,
         })
     }).map_err(|err| format!("No se pudieron leer las sesiones eliminadas: {err}"))?;
 
@@ -1603,6 +1621,7 @@ async fn generate_question_for_session(
     state: &AppState,
     session_id: &str,
     profile: &Profile,
+    subject: Subject,
 ) -> Result<CurrentQuestion, String> {
     let (question_number, total_questions, provider, locale, manual_prompt, concept) = {
         let db = state.db.lock()
@@ -1612,12 +1631,12 @@ async fn generate_question_for_session(
         let question_number = session.questions_answered + 1;
         let total_questions = session.total_questions;
 
-        let manual_prompt = manual_prompt_for_profile(profile);
+        let manual_prompt = prompt_for_profile(&db, &profile.id, subject);
         let concept = if manual_prompt.is_some() {
             None
         } else {
             Some(get_weakest_concept(&db, &profile.id)
-                .unwrap_or_else(|| get_default_concept_for_year(profile.school_year)))
+                .unwrap_or_else(|| get_default_concept_for_subject(subject, profile.school_year)))
         };
 
         let provider_guard = state.llm_provider.lock()
@@ -1634,6 +1653,7 @@ async fn generate_question_for_session(
     };
 
     let llm_question = provider.generate_question(
+        subject,
         profile.school_year,
         profile.current_level,
         concept,
@@ -1778,6 +1798,7 @@ pub fn run() {
             set_locale,
             reset_local_data,
             list_profiles,
+            get_profile_prompts,
             create_profile,
             update_profile,
             delete_profile,

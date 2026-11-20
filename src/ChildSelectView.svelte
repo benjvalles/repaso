@@ -1,10 +1,15 @@
 <script lang="ts">
-  import type { Profile } from "./lib/types"
+  import type { Profile, Subject } from "./lib/types"
+  import { subjectLabel } from "./lib/helpers"
+
+  const SUBJECTS: Subject[] = ["mates", "lengua_espanola", "lengua_inglesa", "naturales", "personalizado"]
 
   /**
    * @property profiles - Lista de perfiles disponibles
    * @property selectedProfileId - ID del perfil seleccionado actualmente
+   * @property selectedSubject - Profesor (asignatura) elegido
    * @property onSelectProfile - Callback al pulsar un perfil (selecciona, no inicia sesion)
+   * @property onSelectSubject - Callback al elegir profesor
    * @property onStartChat - Callback para abrir el chat
    * @property onStartSession - Callback para iniciar entrenamiento
    * @property courseLabel - Funcion para formatear el curso
@@ -12,16 +17,20 @@
   let {
     profiles = [] as Profile[],
     selectedProfileId = "",
+    selectedSubject = "mates" as Subject,
     onSelectProfile = (_id: string) => {},
+    onSelectSubject = (_subject: Subject) => {},
     onStartChat = () => {},
-    onStartSession = (_id: string) => {},
+    onStartSession = (_id: string, _subject: Subject) => {},
     courseLabel = (_c: number) => "",
   }: {
     profiles: Profile[]
     selectedProfileId: string
+    selectedSubject: Subject
     onSelectProfile: (id: string) => void
+    onSelectSubject: (subject: Subject) => void
     onStartChat: () => void
-    onStartSession: (id: string) => void
+    onStartSession: (id: string, subject: Subject) => void
     courseLabel: (year: number) => string
   } = $props()
 
@@ -56,8 +65,24 @@
     </div>
 
     {#if selectedProfile}
+      <div class="subject-picker">
+        <p class="subject-question">¿Con qué profesor quieres practicar?</p>
+        <div class="subject-grid">
+          {#each SUBJECTS as subject (subject)}
+            <button
+              class="subject-card"
+              class:selected={subject === selectedSubject}
+              type="button"
+              onclick={() => onSelectSubject(subject)}
+            >
+              {subjectLabel(subject)}
+            </button>
+          {/each}
+        </div>
+      </div>
+
       <div class="action-buttons">
-        <button class="primary" type="button" onclick={() => onStartSession(selectedProfileId)}>
+        <button class="primary" type="button" onclick={() => onStartSession(selectedProfileId, selectedSubject)}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>
           Entrenamiento
         </button>
@@ -127,6 +152,47 @@
   .profile-info span {
     font-size: 0.85rem;
     color: #64748b;
+  }
+
+  .subject-picker {
+    margin-top: 1rem;
+    text-align: center;
+  }
+
+  .subject-question {
+    font-size: 0.95rem;
+    color: #334155;
+    margin-bottom: 0.6rem;
+  }
+
+  .subject-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: center;
+  }
+
+  .subject-card {
+    padding: 0.5rem 0.9rem;
+    border: 2px solid #e2e8f0;
+    border-radius: 10px;
+    background: white;
+    color: #1e293b;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .subject-card:hover {
+    border-color: #94a3b8;
+    background: #f8fafc;
+  }
+
+  .subject-card.selected {
+    border-color: #3b82f6;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-weight: 600;
   }
 
   .action-buttons {

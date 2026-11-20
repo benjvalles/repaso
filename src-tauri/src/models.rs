@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -83,6 +84,9 @@ pub struct CreateProfileRequest {
     pub level_mode: LevelMode,
     pub manual_level: Option<u8>,
     pub manual_prompt: Option<String>,
+    /// Contexto pedagogico por asignatura ("profesor"): clave = subject, valor = prompt.
+    #[serde(default)]
+    pub prompts: HashMap<String, String>,
 }
 
 /// Datos de entrada para actualizar un perfil de estudiante existente.
@@ -95,6 +99,51 @@ pub struct UpdateProfileRequest {
     pub level_mode: LevelMode,
     pub manual_level: Option<u8>,
     pub manual_prompt: Option<String>,
+    /// Contexto pedagogico por asignatura ("profesor"): clave = subject, valor = prompt.
+    #[serde(default)]
+    pub prompts: HashMap<String, String>,
+}
+
+/// Asignatura ("profesor") que genera los ejercicios del perfil.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Subject {
+    Mates,
+    LenguaEspanola,
+    LenguaInglesa,
+    Naturales,
+    Personalizado,
+}
+
+impl Subject {
+    /// Devuelve la representacion en string de la asignatura.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mates => "mates",
+            Self::LenguaEspanola => "lengua_espanola",
+            Self::LenguaInglesa => "lengua_inglesa",
+            Self::Naturales => "naturales",
+            Self::Personalizado => "personalizado",
+        }
+    }
+
+    /// Construye un `Subject` desde el valor almacenado en base de datos.
+    pub fn from_db(value: String) -> Result<Self, String> {
+        match value.as_str() {
+            "mates" => Ok(Self::Mates),
+            "lengua_espanola" => Ok(Self::LenguaEspanola),
+            "lengua_inglesa" => Ok(Self::LenguaInglesa),
+            "naturales" => Ok(Self::Naturales),
+            "personalizado" => Ok(Self::Personalizado),
+            _ => Err("Asignatura desconocida".to_string()),
+        }
+    }
+}
+
+impl Default for Subject {
+    fn default() -> Self {
+        Self::Mates
+    }
 }
 
 /// Modo de nivel del perfil: automatico (sigue el curso) o manual (configurado por el tutor).
@@ -130,6 +179,7 @@ pub struct Session {
     pub id: String,
     pub profile_id: String,
     pub status: String,
+    pub subject: Subject,
     pub total_questions: u8,
     pub questions_answered: u8,
     pub correct_count: u8,
@@ -225,6 +275,8 @@ pub struct ExplanationResponse {
 #[derive(Debug, Deserialize)]
 pub struct GetQuestionRequest {
     pub profile_id: String,
+    #[serde(default)]
+    pub subject: Subject,
 }
 
 /// Estadisticas globales del panel de control de un perfil.
@@ -446,10 +498,13 @@ pub struct CloudLoginRequest {
 ///
 /// * `message` - Mensaje del usuario.
 /// * `profile_id` - ID del perfil del niño (para conocer edad y curso).
+/// * `subject` - Asignatura ("profesor") con la que se mantiene la conversación.
 #[derive(Debug, Deserialize)]
 pub struct ChatMessageRequest {
     pub message: String,
     pub profile_id: String,
+    #[serde(default)]
+    pub subject: Subject,
 }
 
 /// Respuesta del LLM en el chat libre.

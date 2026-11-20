@@ -1,10 +1,11 @@
 use super::{LLMQuestion, LLMExplanation};
+use crate::models::Subject;
 use reqwest::Client;
 use serde::Serialize;
 
 /// Convierte un código de locale ISO (como `es-ES`, `ca-ES`, `eu-ES`)
 /// al nombre del idioma en español para usar en los prompts.
-fn locale_to_language(locale: &str) -> &str {
+fn locale_to_language(locale: &str) -> &'static str {
     match &locale[..2] {
         "es" => "espanol",
         "ca" => "catalan",
@@ -12,6 +13,85 @@ fn locale_to_language(locale: &str) -> &str {
         "gl" => "gallego",
         "en" => "ingles",
         _ => "espanol",
+    }
+}
+
+/// Devuelve el idioma en el que debe responder el profesor segun la asignatura.
+/// Lengua Inglesa responde siempre en ingles; el resto sigue el locale del dispositivo.
+pub fn subject_language(subject: Subject, locale: &str) -> &'static str {
+    if subject == Subject::LenguaInglesa {
+        "ingles"
+    } else {
+        locale_to_language(locale)
+    }
+}
+
+/// Etiqueta de la materia para el prompt de generacion de ejercicios.
+fn subject_exercise_label(subject: Subject) -> &'static str {
+    match subject {
+        Subject::Mates => "matematicas",
+        Subject::LenguaEspanola => "Lengua Espanola",
+        Subject::LenguaInglesa => "English",
+        Subject::Naturales => "Ciencias Naturales",
+        Subject::Personalizado => "repaso escolar",
+    }
+}
+
+/// System prompt base de generacion de preguntas segun la asignatura.
+pub fn subject_system_prompt(subject: Subject, locale: &str) -> String {
+    let language = subject_language(subject, locale);
+    match subject {
+        Subject::Mates => format!("Eres un tutor de matematicas para ninos. Responde SOLO con JSON valido. Responde siempre en {language}."),
+        Subject::LenguaEspanola => format!("Eres un profesor de Lengua Espanola para ninos de Primaria. Genera ejercicios de ortografia, gramatica, vocabulario, lectura y escritura. Responde SOLO con JSON valido. Responde siempre en {language}."),
+        Subject::LenguaInglesa => "You are an English teacher for primary school kids. Generate exercises about vocabulary, spelling, grammar and reading. Respond ONLY with valid JSON. Always respond in English.".to_string(),
+        Subject::Naturales => format!("Eres un profesor de Ciencias Naturales para ninos de Primaria. Genera ejercicios sobre animales, plantas, cuerpo humano, medio ambiente y materia. Responde SOLO con JSON valido. Responde siempre en {language}."),
+        Subject::Personalizado => format!("Eres un tutor de apoyo escolar para ninos de Primaria. Responde SOLO con JSON valido. Responde siempre en {language}."),
+    }
+}
+
+/// System prompt para explicaciones de errores segun la asignatura.
+pub fn subject_explanation_system_prompt(subject: Subject, locale: &str) -> String {
+    let language = subject_language(subject, locale);
+    match subject {
+        Subject::Mates => format!("Eres un tutor de matematicas para ninos. Responde SOLO con JSON valido. Usa lenguaje motivador y sencillo. Responde siempre en {language}."),
+        Subject::LenguaEspanola => format!("Eres un profesor de Lengua Espanola para ninos de Primaria. Responde SOLO con JSON valido. Usa lenguaje motivador y sencillo. Responde siempre en {language}."),
+        Subject::LenguaInglesa => "You are an English teacher for primary school kids. Respond ONLY with valid JSON. Use simple, encouraging language. Always respond in English.".to_string(),
+        Subject::Naturales => format!("Eres un profesor de Ciencias Naturales para ninos de Primaria. Responde SOLO con JSON valido. Usa lenguaje motivador y sencillo. Responde siempre en {language}."),
+        Subject::Personalizado => format!("Eres un tutor de apoyo escolar para ninos de Primaria. Responde SOLO con JSON valido. Usa lenguaje motivador y sencillo. Responde siempre en {language}."),
+    }
+}
+
+/// System prompt para reformulaciones de conceptos segun la asignatura.
+pub fn subject_reformulation_system_prompt(subject: Subject, locale: &str) -> String {
+    let language = subject_language(subject, locale);
+    match subject {
+        Subject::Mates => format!("Eres un tutor de matematicas para ninos. Responde con una explicacion sencilla y motivadora. Responde siempre en {language}."),
+        Subject::LenguaEspanola => format!("Eres un profesor de Lengua Espanola para ninos de Primaria. Responde con una explicacion sencilla y motivadora. Responde siempre en {language}."),
+        Subject::LenguaInglesa => "You are an English teacher for primary school kids. Respond with a simple, encouraging explanation. Always respond in English.".to_string(),
+        Subject::Naturales => format!("Eres un profesor de Ciencias Naturales para ninos de Primaria. Responde con una explicacion sencilla y motivadora. Responde siempre en {language}."),
+        Subject::Personalizado => format!("Eres un tutor de apoyo escolar para ninos de Primaria. Responde con una explicacion sencilla y motivadora. Responde siempre en {language}."),
+    }
+}
+
+/// Rol del profesor para el system prompt del chat libre.
+pub fn subject_chat_role(subject: Subject) -> &'static str {
+    match subject {
+        Subject::Mates => "Eres un profesor de matematicas para ninos.",
+        Subject::LenguaEspanola => "Eres un profesor de Lengua Espanola para ninos.",
+        Subject::LenguaInglesa => "You are an English teacher for kids.",
+        Subject::Naturales => "Eres un profesor de Ciencias Naturales para ninos.",
+        Subject::Personalizado => "Eres un tutor de apoyo escolar para ninos.",
+    }
+}
+
+/// Tema de conversacion del chat libre segun la asignatura.
+pub fn subject_chat_topic(subject: Subject) -> &'static str {
+    match subject {
+        Subject::Mates => "matematicas",
+        Subject::LenguaEspanola => "Lengua Espanola",
+        Subject::LenguaInglesa => "English",
+        Subject::Naturales => "Ciencias Naturales",
+        Subject::Personalizado => "cualquier asignatura de Primaria",
     }
 }
 
@@ -163,15 +243,15 @@ pub fn parse_json_response<T: serde::de::DeserializeOwned>(response: &str) -> Re
 ///
 /// # Retorna
 /// Tupla `(system_prompt, user_prompt)` lista para enviar al LLM.
-pub fn build_question_prompt(year: u8, level: u8, concept: Option<String>, manual_prompt: Option<&str>, locale: &str) -> (String, String) {
+pub fn build_question_prompt(subject: Subject, year: u8, level: u8, concept: Option<String>, manual_prompt: Option<&str>, locale: &str) -> (String, String) {
     let manual_context = build_manual_context(manual_prompt, "Usalo para orientar el tipo de ejercicios, concepto y dificultad.");
-    let language = locale_to_language(locale);
-    let system = format!("Eres un tutor de matematicas para ninos. Responde SOLO con JSON valido. Responde siempre en {language}.");
+    let system = subject_system_prompt(subject, locale);
+    let exercise_label = subject_exercise_label(subject);
     let mut prompt = if manual_context.is_empty() {
-        let concept_text = concept.unwrap_or_else(|| format!("mate para {year}o primaria nivel {level}"));
-        format!("Genera una pregunta de matematicas para {year}o primaria nivel {level}. Tema: {concept_text}.")
+        let concept_text = concept.unwrap_or_else(|| format!("{exercise_label} para {year}o primaria nivel {level}"));
+        format!("Genera una pregunta de {exercise_label} para {year}o primaria nivel {level}. Tema: {concept_text}.")
     } else {
-        format!("Genera una pregunta de matematicas para {year}o primaria nivel {level}.")
+        format!("Genera una pregunta de {exercise_label} para {year}o primaria nivel {level}.")
     };
     if !manual_context.is_empty() {
         prompt.push_str(&manual_context);
@@ -210,10 +290,9 @@ pub fn parse_question_response(response: &str) -> Result<LLMQuestion, String> {
 ///
 /// # Retorna
 /// Tupla `(system_prompt, user_prompt)` lista para enviar al LLM.
-pub fn build_explanation_prompt(question_text: &str, student_answer: &str, expected_answer: &str, concept: &str, manual_prompt: Option<&str>, locale: &str) -> (String, String) {
+pub fn build_explanation_prompt(subject: Subject, question_text: &str, student_answer: &str, expected_answer: &str, concept: &str, manual_prompt: Option<&str>, locale: &str) -> (String, String) {
     let manual_context = build_manual_context(manual_prompt, "Usalo para adaptar la explicacion, consejos y siguientes pasos.");
-    let language = locale_to_language(locale);
-    let system = format!("Eres un tutor de matematicas para ninos. Responde SOLO con JSON valido. Usa lenguaje motivador y sencillo. Responde siempre en {language}.");
+    let system = subject_explanation_system_prompt(subject, locale);
     let prompt = format!(
         "Pregunta: {}\nRespuesta del alumno: {}\nRespuesta correcta: {}\nConcepto: {}{manual_context}
         Explica por que se equivoco y como resolverlo. Responde SOLO con JSON:
@@ -248,10 +327,9 @@ pub fn parse_explanation_response(response: &str) -> Result<LLMExplanation, Stri
 ///
 /// # Retorna
 /// Tupla `(system_prompt, user_prompt)` lista para enviar al LLM.
-pub fn build_reformulation_prompt(concept: &str, question_text: &str, manual_prompt: Option<&str>, locale: &str) -> (String, String) {
+pub fn build_reformulation_prompt(subject: Subject, concept: &str, question_text: &str, manual_prompt: Option<&str>, locale: &str) -> (String, String) {
     let manual_context = build_manual_context(manual_prompt, "Usalo para reformular el concepto de forma mas adaptada.");
-    let language = locale_to_language(locale);
-    let system = format!("Eres un tutor de matematicas para ninos. Responde con una explicacion sencilla y motivadora. Responde siempre en {language}.");
+    let system = subject_reformulation_system_prompt(subject, locale);
     let prompt = format!(
         "El concepto '{}' para la pregunta '{}' debe explicarse de otra manera.{manual_context} Usa una analogia o ejemplo diferente. Sé breve.",
         concept, question_text

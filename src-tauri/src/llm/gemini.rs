@@ -1,6 +1,7 @@
 use super::{LLMQuestion, LLMExplanation};
 use super::common;
 
+use crate::models::Subject;
 use reqwest::Client;
 use std::time::Duration;
 
@@ -81,8 +82,8 @@ impl GeminiProvider {
     ///
     /// # Retorna
     /// `LLMQuestion` con la pregunta, respuesta correcta, concepto y dificultad.
-    pub async fn generate_question(&self, year: u8, level: u8, concept: Option<String>, manual_prompt: Option<&str>, locale: &str) -> Result<LLMQuestion, String> {
-        let (system, prompt) = common::build_question_prompt(year, level, concept, manual_prompt, locale);
+    pub async fn generate_question(&self, subject: Subject, year: u8, level: u8, concept: Option<String>, manual_prompt: Option<&str>, locale: &str) -> Result<LLMQuestion, String> {
+        let (system, prompt) = common::build_question_prompt(subject, year, level, concept, manual_prompt, locale);
         let response = self.generate_text(&system, &prompt).await?;
         common::parse_question_response(&response)
     }
@@ -98,8 +99,8 @@ impl GeminiProvider {
     ///
     /// # Retorna
     /// `LLMExplanation` con explicación, puntos clave y siguientes pasos.
-    pub async fn provide_explanation(&self, question: &LLMQuestion, student_answer: &str, expected_answer: &str, concept: &str, manual_prompt: Option<&str>, locale: &str) -> Result<LLMExplanation, String> {
-        let (system, prompt) = common::build_explanation_prompt(&question.question, student_answer, expected_answer, concept, manual_prompt, locale);
+    pub async fn provide_explanation(&self, subject: Subject, question: &LLMQuestion, student_answer: &str, expected_answer: &str, concept: &str, manual_prompt: Option<&str>, locale: &str) -> Result<LLMExplanation, String> {
+        let (system, prompt) = common::build_explanation_prompt(subject, &question.question, student_answer, expected_answer, concept, manual_prompt, locale);
         let response = self.generate_text(&system, &prompt).await?;
         common::parse_explanation_response(&response)
     }
@@ -113,8 +114,8 @@ impl GeminiProvider {
     ///
     /// # Retorna
     /// Explicación reformulada en lenguaje sencillo.
-    pub async fn reformulate_concept(&self, concept: &str, question: &LLMQuestion, manual_prompt: Option<&str>, locale: &str) -> Result<String, String> {
-        let (system, prompt) = common::build_reformulation_prompt(concept, &question.question, manual_prompt, locale);
+    pub async fn reformulate_concept(&self, subject: Subject, concept: &str, question: &LLMQuestion, manual_prompt: Option<&str>, locale: &str) -> Result<String, String> {
+        let (system, prompt) = common::build_reformulation_prompt(subject, concept, &question.question, manual_prompt, locale);
         self.generate_text(&system, &prompt).await
     }
 

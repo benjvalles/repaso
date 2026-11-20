@@ -3,6 +3,7 @@ use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, Pass
 use argon2::Argon2;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::HashMap;
 
 use crate::models::*;
 
@@ -39,10 +40,19 @@ pub fn setup_database(db: &Connection) -> Result<(), String> {
             deleted_at TEXT
          );
 
+         CREATE TABLE IF NOT EXISTS profile_prompts (
+            profile_id TEXT NOT NULL REFERENCES profiles(id),
+            subject TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (profile_id, subject)
+         );
+
          CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
             profile_id TEXT NOT NULL REFERENCES profiles(id),
             status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'abandoned')),
+            subject TEXT NOT NULL DEFAULT 'mates',
             total_questions INTEGER NOT NULL DEFAULT 10,
             questions_answered INTEGER NOT NULL DEFAULT 0,
             correct_count INTEGER NOT NULL DEFAULT 0,
@@ -130,7 +140,9 @@ pub fn setup_database(db: &Connection) -> Result<(), String> {
          );",
     ).map_err(|err| format!("No se pudo preparar SQLite: {err}"))?;
     ensure_profile_manual_prompt_column(db)?;
+    ensure_sessions_subject_column(db)?;
     ensure_soft_delete_columns(db)?;
+    migrate_manual_prompt_to_profile_prompts(db)?;
     Ok(())
 }
 
@@ -159,6 +171,24 @@ fn ensure_profile_manual_prompt_column(db: &Connection) -> Result<(), String> {
     if !has_column {
         db.execute("ALTER TABLE profiles ADD COLUMN manual_prompt TEXT", [])
             .map_err(|err| format!("No se pudo migrar perfiles: {err}"))?;
+    }
+    Ok(())
+}
+
+/// Asegura que bases de datos existentes tengan el campo de asignatura ("profesor") en sesiones.
+///
+/// # Argumentos
+///
+/// * `db` - Conexion a la base de datos SQLite.
+///
+/// # Retorna
+///
+/// * `Ok(())` si la migracion fue exitosa o no era necesaria.
+/// * `Err(String)` si fallo la comprobacion o la alteracion.
+fn ensure_sessions_subject_column(db: &Connection) -> Result<(), String> {
+    if !has_column(db, "sessions", "subject")? {
+        db.execute("ALTER TABLE sessions ADD COLUMN subject TEXT NOT NULL DEFAULT 'mates'", [])
+            .map_err(|err| format!("No se pudo migrar sesiones (subject): {err}"))?;
     }
     Ok(())
 }
@@ -372,20 +402,24 @@ pub fn list_deleted_profiles_from_db(db: &Connection) -> Result<Vec<Profile>, St
 /// * `Err(String)` si no existe o falla la consulta.
 pub fn get_session_by_id(db: &Connection, id: &str) -> Result<Session, String> {
     db.query_row(
-        "SELECT id, profile_id, status, total_questions, questions_answered, correct_count, current_question_index, started_at, ended_at
+        "SELECT id, profile_id, status, subject, total_questions, questions_answered, correct_count, current_question_index, started_at, ended_at
          FROM sessions WHERE id = ?1 AND deleted_at IS NULL",
         params![id],
-        |row| Ok(Session {
-            id: row.get(0)?,
-            profile_id: row.get(1)?,
-            status: row.get(2)?,
-            total_questions: row.get(3)?,
-            questions_answered: row.get(4)?,
-            correct_count: row.get(5)?,
-            current_question_index: row.get(6)?,
-            started_at: row.get(7)?,
-            ended_at: row.get(8)?,
-        }),
+        |row| {
+            let subject: String = row.get(3)?;
+            Ok(Session {
+                id: row.get(0)?,
+                profile_id: row.get(1)?,
+                status: row.get(2)?,
+                subject: Subject::from_db(subject).unwrap_or(Subject::Mates),
+                total_questions: row.get(4)?,
+                questions_answered: row.get(5)?,
+                correct_count: row.get(6)?,
+                current_question_index: row.get(7)?,
+                started_at: row.get(8)?,
+                ended_at: row.get(9)?,
+            })
+        },
     ).optional()
     .map_err(|err| format!("No se pudo leer la sesion: {err}"))?
     .ok_or_else(|| "Sesion no encontrada".to_string())
@@ -612,22 +646,137 @@ pub fn resolve_manual_prompt(level_mode: LevelMode, manual_prompt: Option<String
     manual_prompt.map(|prompt| prompt.trim().to_string()).filter(|prompt| !prompt.is_empty())
 }
 
-/// Devuelve el contexto pedagogico aplicable a llamadas LLM del perfil.
+/// Devuelve el contexto pedagogico del perfil para una asignatura concreta.
 ///
 /// # Argumentos
 ///
-/// * `profile` - Perfil del estudiante.
+/// * `db` - Conexion a la base de datos SQLite.
+/// * `profile_id` - Identificador del perfil.
+/// * `subject` - Asignatura ("profesor") del contexto.
 ///
 /// # Retorna
 ///
-/// * `Some(String)` con el contexto pedagogico si el modo es manual.
-/// * `None` si el modo es automatico.
-pub fn manual_prompt_for_profile(profile: &Profile) -> Option<String> {
-    if profile.level_mode == LevelMode::Manual {
-        profile.manual_prompt.clone()
-    } else {
-        None
+/// * `Some(String)` con el contexto normalizado si existe y no esta vacio.
+/// * `None` si no hay contexto para esa asignatura.
+pub fn prompt_for_profile(db: &Connection, profile_id: &str, subject: Subject) -> Option<String> {
+    db.query_row(
+        "SELECT prompt FROM profile_prompts WHERE profile_id = ?1 AND subject = ?2",
+        params![profile_id, subject.as_str()],
+        |row| row.get::<_, String>(0),
+    ).optional().ok().flatten()
+        .map(|prompt| prompt.trim().to_string())
+        .filter(|prompt| !prompt.is_empty())
+}
+
+/// Carga todos los contextos pedagogicos de un perfil, indexados por asignatura.
+///
+/// # Argumentos
+///
+/// * `db` - Conexion a la base de datos SQLite.
+/// * `profile_id` - Identificador del perfil.
+///
+/// # Retorna
+///
+/// * `HashMap<String, String>` con clave = subject y valor = prompt.
+pub fn load_profile_prompts(db: &Connection, profile_id: &str) -> HashMap<String, String> {
+    let mut prompts = HashMap::new();
+    if let Ok(mut stmt) = db.prepare("SELECT subject, prompt FROM profile_prompts WHERE profile_id = ?1") {
+        if let Ok(rows) = stmt.query_map(params![profile_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }) {
+            for (subject, prompt) in rows.flatten() {
+                prompts.insert(subject, prompt);
+            }
+        }
     }
+    prompts
+}
+
+/// Guarda los contextos pedagogicos de un perfil, reemplazando los existentes.
+///
+/// # Argumentos
+///
+/// * `db` - Conexion a la base de datos SQLite.
+/// * `profile_id` - Identificador del perfil.
+/// * `prompts` - Mapa con clave = subject y valor = prompt.
+///
+/// # Retorna
+///
+/// * `Ok(())` si se guardaron correctamente.
+/// * `Err(String)` si fallo la escritura o un prompt supera 1000 caracteres.
+pub fn save_profile_prompts(db: &Connection, profile_id: &str, prompts: &HashMap<String, String>) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339();
+    db.execute("DELETE FROM profile_prompts WHERE profile_id = ?1", params![profile_id])
+        .map_err(|err| format!("No se pudieron actualizar los contextos: {err}"))?;
+    for (subject, prompt) in prompts {
+        if Subject::from_db(subject.clone()).is_err() {
+            continue;
+        }
+        let prompt = prompt.trim();
+        if prompt.is_empty() {
+            continue;
+        }
+        if prompt.len() > 1000 {
+            return Err("El contexto pedagogico no puede superar 1000 caracteres".to_string());
+        }
+        db.execute(
+            "INSERT INTO profile_prompts (profile_id, subject, prompt, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            params![profile_id, subject, prompt, now],
+        ).map_err(|err| format!("No se pudo guardar el contexto: {err}"))?;
+    }
+    Ok(())
+}
+
+/// Migra el contexto pedagogico antiguo (unico por perfil) a la tabla por asignatura.
+///
+/// Copia `profiles.manual_prompt` al prompt de la asignatura que tenia el perfil,
+/// solo si aun no existe un contexto para esa asignatura.
+///
+/// # Argumentos
+///
+/// * `db` - Conexion a la base de datos SQLite.
+///
+/// # Retorna
+///
+/// * `Ok(())` si la migracion termino (o no era necesaria).
+/// * `Err(String)` si fallo la lectura o escritura.
+fn migrate_manual_prompt_to_profile_prompts(db: &Connection) -> Result<(), String> {
+    const MIGRATED_KEY: &str = "profile_prompts_migrated";
+    if get_setting(db, MIGRATED_KEY)?.is_some() {
+        return Ok(());
+    }
+    let has_subject = has_column(db, "profiles", "subject")?;
+    let sql = if has_subject {
+        "SELECT id, manual_prompt, subject FROM profiles
+         WHERE manual_prompt IS NOT NULL AND TRIM(manual_prompt) != ''"
+    } else {
+        "SELECT id, manual_prompt, 'mates' FROM profiles
+         WHERE manual_prompt IS NOT NULL AND TRIM(manual_prompt) != ''"
+    };
+    let mut stmt = db.prepare(sql)
+        .map_err(|err| format!("No se pudieron preparar los contextos antiguos: {err}"))?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+    }).map_err(|err| format!("No se pudieron leer los contextos antiguos: {err}"))?;
+    for row in rows {
+        let (profile_id, prompt, subject) = row.map_err(|err| format!("Contexto antiguo invalido: {err}"))?;
+        let exists = db.query_row(
+            "SELECT COUNT(*) FROM profile_prompts WHERE profile_id = ?1 AND subject = ?2",
+            params![profile_id, subject],
+            |row| row.get::<_, i64>(0),
+        ).map_err(|err| format!("No se pudo comprobar el contexto antiguo: {err}"))?;
+        if exists == 0 {
+            db.execute(
+                "INSERT OR IGNORE INTO profile_prompts (profile_id, subject, prompt, updated_at) VALUES (?1, ?2, ?3, ?4)",
+                params![profile_id, subject, prompt.trim(), Utc::now().to_rfc3339()],
+            ).map_err(|err| format!("No se pudo migrar el contexto antiguo: {err}"))?;
+        }
+    }
+    // El contexto unico antiguo queda migrado: no se vuelve a usar.
+    db.execute("UPDATE profiles SET manual_prompt = NULL WHERE manual_prompt IS NOT NULL", [])
+        .map_err(|err| format!("No se pudo limpiar el contexto antiguo: {err}"))?;
+    set_setting(db, MIGRATED_KEY, "true")?;
+    Ok(())
 }
 
 /// Resuelve el nivel actual segun el modo: automatico usa el curso, manual usa el nivel manual.
@@ -752,6 +901,26 @@ pub fn get_default_concept_for_year(year: u8) -> String {
         5 => "fracciones y decimales".to_string(),
         6 => "porcentajes y fracciones equivalentes".to_string(),
         _ => "operaciones basicas".to_string(),
+    }
+}
+
+/// Devuelve un concepto predeterminado segun la asignatura y el curso cuando no hay historial.
+///
+/// # Argumentos
+///
+/// * `subject` - Asignatura ("profesor") del perfil.
+/// * `year` - Curso escolar (1 a 6).
+///
+/// # Retorna
+///
+/// * `String` con el concepto predeterminado para la asignatura y curso.
+pub fn get_default_concept_for_subject(subject: Subject, year: u8) -> String {
+    match subject {
+        Subject::Mates => get_default_concept_for_year(year),
+        Subject::LenguaEspanola => "ortografia y gramatica basica".to_string(),
+        Subject::LenguaInglesa => "vocabulario basico en ingles".to_string(),
+        Subject::Naturales => "seres vivos y su entorno".to_string(),
+        Subject::Personalizado => get_default_concept_for_year(year),
     }
 }
 
